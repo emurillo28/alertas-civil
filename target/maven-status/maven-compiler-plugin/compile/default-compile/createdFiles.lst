@@ -1,0 +1,7 @@
+com\hospital\alertas\application\service\IngestLabService$CriticalThreshold.class
+com\hospital\alertas\domain\model\LabResult.class
+com\hospital\alertas\application\ports\outbound\LabPersistencePort.class
+com\hospital\alertas\application\ports\inbound\IngestLabUseCase.class
+com\hospital\alertas\domain\exception\LabValidationException.class
+com\hospital\alertas\application\service\IngestLabService.class
+com\hospital\alertas\domain\model\PatientId.class

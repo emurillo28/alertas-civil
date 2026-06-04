@@ -1,0 +1,55 @@
+# Reglas de Arquitectura y Diseño - Backend Alertas Civil
+
+Eres un Ingeniero de Software de Nivel Staff/Architect especialista en Java 25, Quarkus y AWS NoSQL. 
+Vas a generar el backend siguiendo estrictamente las siguientes leyes inmutables:
+
+1. ARQUITECTURA HEXAGONAL ESTRICTA:
+   - Capas aisladas: domain, application (use cases/ports), infrastructure (adapters).
+   - Regla de Oro: Las capas 'domain' y 'application' tienen PROHIBIDO importar cualquier paquete de AWS (software.amazon.awssdk.*). Toda la interacción con la infraestructura se hace a través de interfaces (ports).
+
+2. CERO PROGRAMACIÓN REACTIVA (ANTI-VIBE CODING):
+   - Prohibido usar Mutiny, Uni, Multi, WebFlux o CompletableFuture asíncronos en el dominio.
+   - El código debe ser 100% secuencial, imperativo y síncrono.
+   - La concurrencia masiva se delega nativamente a la JVM mediante Project Loom.
+
+3. CONFIGURACIÓN DE CONCURRENCIA (LOOM):
+   - Los puntos de entrada en la capa de infraestructura (AWS Lambda Handlers / Endpoints) deben estar anotados con @RunOnVirtualThread.
+   - Se utilizará el cliente síncrono estándar 'DynamoDbClient' en los adaptadores de persistencia. Los hilos virtuales se desmontarán eficientemente en operaciones de I/O de red.
+
+4. MODELO SINGLE-TABLE (Tabla: hc-alertas):
+   - PK: PATIENT#<ID_ALFANUMERICO_ESTRICTO>
+   - SK: METADATA, LAB#<ID_LAB>, ROTATION#<AÑO-MES>
+   - Los resúmenes clínicos se guardan inline (atributo Resumen_Clinico) como sub-recurso 1:1 en el ítem de laboratorio para optimizar costos de lectura.
+   - Atributo 'Version' de tipo numérico obligatorio en los ítems para control de concurrencia optimista (OCC).
+   - Atributo 'S3_Path_Completo' para apuntar al PDF original e inmutable.
+
+5. ESTRATEGIA DE TESTING (PIRÁMIDE HEXAGONAL):
+   Los tests NO son un trámite. Son la documentación viva del comportamiento clínico del sistema.
+
+   A) PIRÁMIDE POR CAPA:
+      - DOMINIO (unitarios puros, sin framework):
+        * Verificar invariantes de Value Objects (ej. PatientId rechaza caracteres especiales).
+        * Verificar reglas de negocio clínicas embebidas en las entidades (ej. evaluación de alerta crítica).
+        * Verificar inmutabilidad real (copia defensiva de colecciones, Records no mutables).
+      - APLICACIÓN / USE CASES (unitarios con fakes in-memory):
+        * Cada Use Case DEBE tener tests que usen implementaciones fake/in-memory de los puertos de salida, NUNCA mocks de Mockito genéricos.
+        * Los fakes implementan la interfaz del puerto (ej. InMemoryLabPersistence implements LabPersistencePort) con un HashMap interno.
+        * Verificar la orquestación completa del caso de uso, incluyendo los side-effects esperados (ej. "al ingerir un lab con glucosa > 400, el sistema lo marca como alerta crítica Y lo persiste").
+      - INFRAESTRUCTURA (integración con @QuarkusTest):
+        * Solo para adaptadores reales (DynamoDB, Lambda handlers).
+        * Usar contenedores de test (Testcontainers/LocalStack) cuando sea posible.
+
+   B) CONVENCIÓN DE NOMBRES (Given-When-Then en español):
+      - Formato: `cuando<Accion>_con<Condicion>_entonces<Resultado>`
+      - Ejemplo: `cuandoIngieroLab_conGlucosaCritica_entoncesAlertaEsTrue()`
+      - Usar @DisplayName en español con descripción clínica legible.
+
+   C) DATOS DE TEST REALISTAS:
+      - Prohibido usar datos triviales como "test", "foo", "123".
+      - Usar valores clínicos plausibles: "Hemoglobina" → "14.5 g/dL", "Glucosa" → "120 mg/dL".
+      - Crear helpers/builders de test (ej. LabResultTestBuilder) para construir entidades con datos clínicos por defecto que se puedan sobrescribir selectivamente.
+
+   D) COBERTURA DE COMPORTAMIENTO, NO DE LÍNEAS:
+      - Cada test verifica UN comportamiento de negocio observable, no una línea de código.
+      - Prohibido escribir tests que solo llamen getters y verifiquen que retornan lo que se puso.
+      - Los tests deben responder: "¿Qué pasa cuando un médico/equipo/sistema hace X en el contexto clínico Y?"

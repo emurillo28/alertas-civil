@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  # LocalStack provee emulación de AWS DynamoDB y S3 localmente para desarrollo/pruebas
+  localstack:
+    image: localstack/localstack:latest
+    container_name: hc-alertas-localstack
+    ports:
+      - "4566:4566"            # LocalStack Edge Port (sirve todos los servicios)
+    environment:
+      - SERVICES=dynamodb,s3
+      - DEFAULT_REGION=us-east-1
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - "./localstack_data:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
