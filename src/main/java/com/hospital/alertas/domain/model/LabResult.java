@@ -1,6 +1,8 @@
 package com.hospital.alertas.domain.model;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -10,17 +12,24 @@ import java.util.UUID;
  *
  * <p>Mapea al patrón Single-Table de DynamoDB:
  * <ul>
- *   <li>PK: PATIENT#<PatientId></li>
- *   <li>SK: LAB#<labId></li>
+ *   <li>PK: PATIENT#&lt;PatientId&gt;</li>
+ *   <li>SK: LAB#&lt;labId&gt;</li>
  * </ul>
  *
  * <p>Modelada como Java Record para garantizar inmutabilidad.
- * Los valores analíticos se representan como un {@code Map<String, String>}
- * para soportar la naturaleza heterogénea de los exámenes clínicos
- * (ej. glucosa=120mg/dL, hemoglobina=14.5g/dL).
  *
- * <p>El campo {@code resumenClinico} se almacena inline (sub-recurso 1:1)
- * dentro del ítem de laboratorio para optimizar costos de lectura (1 RCU).
+ * <h2>Campos extendidos (v2)</h2>
+ * <ul>
+ *   <li>{@code estadoVisibilidad}: ciclo de vida de la notificación al médico.
+ *       Default: {@link EstadoVisibilidad#PENDIENTE}.</li>
+ *   <li>{@code notificaciones}: auditoría inline de todas las notificaciones enviadas.
+ *       Se persiste en DynamoDB como lista dentro del mismo ítem (1 RCU de lectura).
+ *       Default: lista vacía.</li>
+ * </ul>
+ *
+ * <p>Los campos {@code estadoVisibilidad} y {@code notificaciones} admiten {@code null}
+ * en el constructor compacto; se normalizan automáticamente a sus valores por defecto.
+ * Esto garantiza compatibilidad con ítems DynamoDB legacy que no tengan estos campos.
  *
  * <p>El campo {@code version} soporta Control de Concurrencia Optimista (OCC)
  * mediante ConditionExpression en DynamoDB.
@@ -34,12 +43,14 @@ public record LabResult(
         boolean alertaCritica,
         String s3PathCompleto,
         String resumenClinico,
-        long version
+        long version,
+        EstadoVisibilidad estadoVisibilidad,
+        List<NotificacionEnviada> notificaciones
 ) {
 
     /**
      * Constructor compacto con validaciones defensivas.
-     * Garantiza que ningún campo obligatorio sea nulo o inválido.
+     * Normaliza nulls en campos opcionales a sus valores por defecto.
      */
     public LabResult {
         Objects.requireNonNull(labId, "labId no puede ser nulo");
@@ -53,7 +64,8 @@ public record LabResult(
         }
         Objects.requireNonNull(valoresAnaliticos, "valoresAnaliticos no puede ser nulo");
         if (valoresAnaliticos.isEmpty()) {
-            throw new IllegalArgumentException("valoresAnaliticos no puede estar vacío: debe contener al menos un resultado analítico");
+            throw new IllegalArgumentException(
+                    "valoresAnaliticos no puede estar vacío: debe contener al menos un resultado analítico");
         }
         // Copia defensiva para garantizar inmutabilidad del mapa
         valoresAnaliticos = Map.copyOf(valoresAnaliticos);
@@ -63,19 +75,30 @@ public record LabResult(
             throw new IllegalArgumentException("s3PathCompleto no puede estar vacío");
         }
         if (version < 0) {
-            throw new IllegalArgumentException("version debe ser >= 0. Recibido: %d".formatted(version));
+            throw new IllegalArgumentException(
+                    "version debe ser >= 0. Recibido: %d".formatted(version));
         }
+
+        // Normalización de campos opcionales con valores por defecto
+        // Permite compatibilidad con ítems DynamoDB legacy sin estos campos
+        if (estadoVisibilidad == null) estadoVisibilidad = EstadoVisibilidad.PENDIENTE;
+        if (notificaciones == null) notificaciones = List.of();
+        notificaciones = List.copyOf(notificaciones); // copia defensiva inmutable
         // resumenClinico puede ser nulo (aún no generado por el flujo de IA)
     }
 
+    // ─── Claves DynamoDB ────────────────────────────────────────────────
+
     /**
-     * Genera la clave de ordenamiento (SK) para el modelo Single-Table de DynamoDB.
+     * Genera la clave de ordenamiento (SK) para el modelo Single-Table.
      *
-     * @return cadena con formato LAB#<labId>
+     * @return cadena con formato LAB#&lt;labId&gt;
      */
     public String toDynamoSortKey() {
         return "LAB#" + labId;
     }
+
+    // ─── Métodos with* (builders funcionales inmutables) ────────────────
 
     /**
      * Crea un nuevo LabResult con la versión incrementada para OCC.
@@ -86,7 +109,7 @@ public record LabResult(
         return new LabResult(
                 labId, patientId, tipoExamen, valoresAnaliticos,
                 timestamp, alertaCritica, s3PathCompleto, resumenClinico,
-                version + 1
+                version + 1, estadoVisibilidad, notificaciones
         );
     }
 
@@ -101,14 +124,12 @@ public record LabResult(
         return new LabResult(
                 labId, patientId, tipoExamen, valoresAnaliticos,
                 timestamp, alertaCritica, s3PathCompleto, nuevoResumen,
-                version
+                version, estadoVisibilidad, notificaciones
         );
     }
 
     /**
      * Crea un nuevo LabResult con el indicador de alerta crítica actualizado.
-     * Utilizado por el servicio de ingesta cuando la evaluación de umbrales
-     * clínicos determina que el resultado requiere atención inmediata.
      *
      * @param esAlertaCritica true si el resultado supera umbrales de peligro
      * @return nueva instancia con el indicador de alerta actualizado
@@ -117,13 +138,55 @@ public record LabResult(
         return new LabResult(
                 labId, patientId, tipoExamen, valoresAnaliticos,
                 timestamp, esAlertaCritica, s3PathCompleto, resumenClinico,
-                version
+                version, estadoVisibilidad, notificaciones
         );
     }
 
     /**
-     * Método factory para crear un nuevo LabResult con un UUID generado automáticamente
-     * y versión inicial 0.
+     * Crea un nuevo LabResult con el estado de visibilidad actualizado.
+     *
+     * <p>Usado por {@code AcknowledgeLabReadService} y {@code NotifyLabReadyService}
+     * para avanzar el ciclo: PENDIENTE → NOTIFICADO → CONFIRMADO_LECTURA.
+     *
+     * @param nuevoEstado nuevo estado de visibilidad
+     * @return nueva instancia con el estado actualizado
+     */
+    public LabResult withEstadoVisibilidad(EstadoVisibilidad nuevoEstado) {
+        Objects.requireNonNull(nuevoEstado, "El estado de visibilidad no puede ser nulo");
+        return new LabResult(
+                labId, patientId, tipoExamen, valoresAnaliticos,
+                timestamp, alertaCritica, s3PathCompleto, resumenClinico,
+                version, nuevoEstado, notificaciones
+        );
+    }
+
+    /**
+     * Crea un nuevo LabResult con una notificación adicional en el historial.
+     *
+     * <p>Usa una nueva lista inmutable que incluye todas las notificaciones
+     * anteriores más la nueva, preservando el orden de inserción.
+     *
+     * @param nuevaNotificacion notificación a agregar al historial
+     * @return nueva instancia con la notificación registrada
+     */
+    public LabResult withNotificacionAgregada(NotificacionEnviada nuevaNotificacion) {
+        Objects.requireNonNull(nuevaNotificacion, "La notificación no puede ser nula");
+        List<NotificacionEnviada> nuevaLista = new ArrayList<>(notificaciones);
+        nuevaLista.add(nuevaNotificacion);
+        return new LabResult(
+                labId, patientId, tipoExamen, valoresAnaliticos,
+                timestamp, alertaCritica, s3PathCompleto, resumenClinico,
+                version, estadoVisibilidad, nuevaLista
+        );
+    }
+
+    // ─── Factory methods ────────────────────────────────────────────────
+
+    /**
+     * Crea un nuevo LabResult con UUID generado automáticamente y versión inicial 0.
+     *
+     * <p>El estado de visibilidad inicia en PENDIENTE y sin notificaciones.
+     * El resumen clínico se genera en un flujo posterior por IA.
      */
     public static LabResult create(
             PatientId patientId,
@@ -141,8 +204,10 @@ public record LabResult(
                 timestamp,
                 alertaCritica,
                 s3PathCompleto,
-                null,   // resumenClinico se genera después por el flujo de IA
-                0L      // versión inicial para OCC
+                null,                           // resumenClinico: se genera después
+                0L,                             // version inicial para OCC
+                EstadoVisibilidad.PENDIENTE,    // estado inicial
+                List.of()                       // sin notificaciones al crear
         );
     }
 }
