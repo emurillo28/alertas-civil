@@ -62,7 +62,7 @@ class IngestLabServiceTest {
 
             service.execute(lab);
 
-            Optional<LabResult> found = persistence.findLatestByPatient(new PatientId("PAC999"));
+            Optional<LabResult> found = persistence.obtenerUltimoLaboratorio(new PatientId("PAC999"));
             assertTrue(found.isPresent());
             assertEquals("PAC999", found.get().patientId().value());
         }

@@ -2,6 +2,7 @@ package com.hospital.alertas.domain.model;
 
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -29,6 +30,8 @@ public final class LabResultTestBuilder {
     private String s3PathCompleto = "s3://hc-laboratorios/2026/06/01/PAC001/BH-001.pdf";
     private String resumenClinico = null;
     private long version = 0L;
+    private EstadoVisibilidad estadoVisibilidad = EstadoVisibilidad.PENDIENTE;
+    private List<NotificacionEnviada> notificaciones = List.of();
 
     public LabResultTestBuilder withLabId(String labId) {
         this.labId = labId;
@@ -97,12 +100,23 @@ public final class LabResultTestBuilder {
         return this;
     }
 
+    public LabResultTestBuilder withEstadoVisibilidad(EstadoVisibilidad estadoVisibilidad) {
+        this.estadoVisibilidad = estadoVisibilidad;
+        return this;
+    }
+
+    public LabResultTestBuilder withNotificaciones(List<NotificacionEnviada> notificaciones) {
+        this.notificaciones = notificaciones;
+        return this;
+    }
+
     public LabResult build() {
         return new LabResult(
                 labId, patientId, tipoExamen,
                 Map.copyOf(valoresAnaliticos),
                 timestamp, alertaCritica, s3PathCompleto,
-                resumenClinico, version
+                resumenClinico, version,
+                estadoVisibilidad, notificaciones
         );
     }
 

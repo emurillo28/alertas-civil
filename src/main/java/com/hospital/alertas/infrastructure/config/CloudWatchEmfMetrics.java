@@ -20,16 +20,20 @@ import java.time.Instant;
 public class CloudWatchEmfMetrics {
 
     private final String environment;
+    private final String namespace;
 
     /**
      * Constructor con inyección de propiedades.
      *
      * @param environment perfil activo de la aplicación (dev, staging, prod)
+     * @param namespace   namespace de CloudWatch para las métricas (configurable)
      */
     public CloudWatchEmfMetrics(
-            @ConfigProperty(name = "quarkus.profile", defaultValue = "dev") String environment
+            @ConfigProperty(name = "quarkus.profile", defaultValue = "dev") String environment,
+            @ConfigProperty(name = "app.metrics.emf.namespace", defaultValue = "hc-alertas") String namespace
     ) {
         this.environment = environment;
+        this.namespace = namespace;
     }
 
     /**
@@ -63,7 +67,7 @@ public class CloudWatchEmfMetrics {
                 + "\"_aws\":{"
                 + "\"Timestamp\":" + Instant.now().toEpochMilli() + ","
                 + "\"CloudWatchMetrics\":[{"
-                + "\"Namespace\":\"hc-alertas\","
+                + "\"Namespace\":\"" + namespace + "\","
                 + "\"Dimensions\":[[\"Environment\"]],"
                 + "\"Metrics\":["
                 + "{\"Name\":\"medical_alerts_ingest_total\",\"Unit\":\"Count\"},"

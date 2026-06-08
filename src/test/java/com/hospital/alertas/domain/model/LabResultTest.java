@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -25,10 +26,9 @@ class LabResultTest {
     private static final String S3_PATH = "s3://hc-laboratorios/2026/06/01/PAC001/BH-001.pdf";
 
     private LabResult crearLabValido() {
-        return new LabResult(
-                "LAB001", PATIENT_ID, TIPO_EXAMEN, VALORES,
-                TIMESTAMP, false, S3_PATH, null, 0L
-        );
+        return new LabResultTestBuilder()
+                .withLabId("LAB001")
+                .build();
     }
 
     @Nested
@@ -54,10 +54,12 @@ class LabResultTest {
         @Test
         @DisplayName("crea LabResult con alerta crítica activa")
         void creaLabConAlertaCritica() {
-            var lab = new LabResult(
-                    "LAB002", PATIENT_ID, "Glucosa", Map.of("Glucosa", "450 mg/dL"),
-                    TIMESTAMP, true, S3_PATH, null, 0L
-            );
+            var lab = new LabResultTestBuilder()
+                    .withLabId("LAB002")
+                    .withTipoExamen("Glucosa")
+                    .withSoloAnalito("Glucosa", "450 mg/dL")
+                    .withAlertaCritica(true)
+                    .build();
 
             assertTrue(lab.alertaCritica());
         }
@@ -65,10 +67,13 @@ class LabResultTest {
         @Test
         @DisplayName("crea LabResult con resumen clínico")
         void creaLabConResumen() {
-            var lab = new LabResult(
-                    "LAB003", PATIENT_ID, TIPO_EXAMEN, VALORES,
-                    TIMESTAMP, false, S3_PATH, "Valores dentro de rangos normales", 1L
-            );
+            var lab = new LabResultTestBuilder()
+                    .withLabId("LAB003")
+                    .withTipoExamen(TIPO_EXAMEN)
+                    .withValoresAnaliticos(VALORES)
+                    .withResumenClinico("Valores dentro de rangos normales")
+                    .withVersion(1L)
+                    .build();
 
             assertEquals("Valores dentro de rangos normales", lab.resumenClinico());
             assertEquals(1L, lab.version());
@@ -107,10 +112,22 @@ class LabResultTest {
     @DisplayName("Validación de rechazo")
     class ValidacionRechazo {
 
+        private LabResult builderWithInvalid(String labId, PatientId patientId, String tipoExamen,
+                                               Map<String, String> valoresAnaliticos, Instant timestamp,
+                                               Boolean alertaCritica, String s3Path, String resumenClinico,
+                                               Long version) {
+            return new LabResult(
+                    labId, patientId, tipoExamen, valoresAnaliticos,
+                    timestamp, alertaCritica, s3Path,
+                    resumenClinico, version,
+                    EstadoVisibilidad.PENDIENTE, List.of()
+            );
+        }
+
         @Test
         @DisplayName("rechaza labId nulo")
         void rechazaLabIdNulo() {
-            assertThrows(NullPointerException.class, () -> new LabResult(
+            assertThrows(NullPointerException.class, () -> builderWithInvalid(
                     null, PATIENT_ID, TIPO_EXAMEN, VALORES, TIMESTAMP, false, S3_PATH, null, 0L
             ));
         }
@@ -118,7 +135,7 @@ class LabResultTest {
         @Test
         @DisplayName("rechaza labId vacío")
         void rechazaLabIdVacio() {
-            assertThrows(IllegalArgumentException.class, () -> new LabResult(
+            assertThrows(IllegalArgumentException.class, () -> builderWithInvalid(
                     "", PATIENT_ID, TIPO_EXAMEN, VALORES, TIMESTAMP, false, S3_PATH, null, 0L
             ));
         }
@@ -126,7 +143,7 @@ class LabResultTest {
         @Test
         @DisplayName("rechaza patientId nulo")
         void rechazaPatientIdNulo() {
-            assertThrows(NullPointerException.class, () -> new LabResult(
+            assertThrows(NullPointerException.class, () -> builderWithInvalid(
                     "LAB001", null, TIPO_EXAMEN, VALORES, TIMESTAMP, false, S3_PATH, null, 0L
             ));
         }
@@ -134,7 +151,7 @@ class LabResultTest {
         @Test
         @DisplayName("rechaza tipoExamen nulo")
         void rechazaTipoExamenNulo() {
-            assertThrows(NullPointerException.class, () -> new LabResult(
+            assertThrows(NullPointerException.class, () -> builderWithInvalid(
                     "LAB001", PATIENT_ID, null, VALORES, TIMESTAMP, false, S3_PATH, null, 0L
             ));
         }
@@ -142,7 +159,7 @@ class LabResultTest {
         @Test
         @DisplayName("rechaza tipoExamen vacío")
         void rechazaTipoExamenVacio() {
-            assertThrows(IllegalArgumentException.class, () -> new LabResult(
+            assertThrows(IllegalArgumentException.class, () -> builderWithInvalid(
                     "LAB001", PATIENT_ID, "", VALORES, TIMESTAMP, false, S3_PATH, null, 0L
             ));
         }
@@ -150,7 +167,7 @@ class LabResultTest {
         @Test
         @DisplayName("rechaza valoresAnaliticos nulo")
         void rechazaValoresNulo() {
-            assertThrows(NullPointerException.class, () -> new LabResult(
+            assertThrows(NullPointerException.class, () -> builderWithInvalid(
                     "LAB001", PATIENT_ID, TIPO_EXAMEN, null, TIMESTAMP, false, S3_PATH, null, 0L
             ));
         }
@@ -158,7 +175,7 @@ class LabResultTest {
         @Test
         @DisplayName("rechaza valoresAnaliticos vacío")
         void rechazaValoresVacio() {
-            assertThrows(IllegalArgumentException.class, () -> new LabResult(
+            assertThrows(IllegalArgumentException.class, () -> builderWithInvalid(
                     "LAB001", PATIENT_ID, TIPO_EXAMEN, Map.of(), TIMESTAMP, false, S3_PATH, null, 0L
             ));
         }
@@ -166,7 +183,7 @@ class LabResultTest {
         @Test
         @DisplayName("rechaza timestamp nulo")
         void rechazaTimestampNulo() {
-            assertThrows(NullPointerException.class, () -> new LabResult(
+            assertThrows(NullPointerException.class, () -> builderWithInvalid(
                     "LAB001", PATIENT_ID, TIPO_EXAMEN, VALORES, null, false, S3_PATH, null, 0L
             ));
         }
@@ -174,7 +191,7 @@ class LabResultTest {
         @Test
         @DisplayName("rechaza s3PathCompleto nulo")
         void rechazaS3PathNulo() {
-            assertThrows(NullPointerException.class, () -> new LabResult(
+            assertThrows(NullPointerException.class, () -> builderWithInvalid(
                     "LAB001", PATIENT_ID, TIPO_EXAMEN, VALORES, TIMESTAMP, false, null, null, 0L
             ));
         }
@@ -182,7 +199,7 @@ class LabResultTest {
         @Test
         @DisplayName("rechaza s3PathCompleto vacío")
         void rechazaS3PathVacio() {
-            assertThrows(IllegalArgumentException.class, () -> new LabResult(
+            assertThrows(IllegalArgumentException.class, () -> builderWithInvalid(
                     "LAB001", PATIENT_ID, TIPO_EXAMEN, VALORES, TIMESTAMP, false, "", null, 0L
             ));
         }
@@ -190,7 +207,7 @@ class LabResultTest {
         @Test
         @DisplayName("rechaza versión negativa")
         void rechazaVersionNegativa() {
-            assertThrows(IllegalArgumentException.class, () -> new LabResult(
+            assertThrows(IllegalArgumentException.class, () -> builderWithInvalid(
                     "LAB001", PATIENT_ID, TIPO_EXAMEN, VALORES, TIMESTAMP, false, S3_PATH, null, -1L
             ));
         }
@@ -208,7 +225,8 @@ class LabResultTest {
 
             var lab = new LabResult(
                     "LAB001", PATIENT_ID, TIPO_EXAMEN, mutableMap,
-                    TIMESTAMP, false, S3_PATH, null, 0L
+                    TIMESTAMP, false, S3_PATH, null, 0L,
+                    EstadoVisibilidad.PENDIENTE, List.of()
             );
 
             // Modificar el mapa original no afecta al record

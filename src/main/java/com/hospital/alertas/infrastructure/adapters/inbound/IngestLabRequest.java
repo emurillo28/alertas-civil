@@ -1,9 +1,11 @@
 package com.hospital.alertas.infrastructure.adapters.inbound;
 
+import com.hospital.alertas.domain.model.EstadoVisibilidad;
 import com.hospital.alertas.domain.model.LabResult;
 import com.hospital.alertas.domain.model.PatientId;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -61,7 +63,9 @@ public record IngestLabRequest(
                 alertaCritica != null ? alertaCritica : false,
                 s3PathCompleto,
                 null,   // resumenClinico — se genera en un flujo posterior
-                0L      // versión inicial para OCC
+                0L,     // versión inicial para OCC
+                EstadoVisibilidad.PENDIENTE,    // estado inicial
+                List.of()                       // sin notificaciones al crear
         );
     }
 }

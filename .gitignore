@@ -1,0 +1,61 @@
+# Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Quarkus
+quarkus-app/
+
+# Native build
+*-runner
+*-runner.*
+build/
+
+# Logs
+*.log
+logs/
+
+# Test reports
+target/surefire-reports/
+target/failsafe-reports/
+
+# Coverage
+*.jacoco.exec
+target/jacoco/
+
+# Local config
+local.properties
+application-dev.properties
+application-test.properties
+
+# Docker
+.docker/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+
+# Temp
+*.tmp
+*.temp
+.tmp/
+.temp/
