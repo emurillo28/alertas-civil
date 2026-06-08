@@ -1,6 +1,0 @@
-C:\dev\alertas-civil\src\main\java\com\hospital\alertas\application\ports\inbound\IngestLabUseCase.java
-C:\dev\alertas-civil\src\main\java\com\hospital\alertas\application\ports\outbound\LabPersistencePort.java
-C:\dev\alertas-civil\src\main\java\com\hospital\alertas\application\service\IngestLabService.java
-C:\dev\alertas-civil\src\main\java\com\hospital\alertas\domain\exception\LabValidationException.java
-C:\dev\alertas-civil\src\main\java\com\hospital\alertas\domain\model\LabResult.java
-C:\dev\alertas-civil\src\main\java\com\hospital\alertas\domain\model\PatientId.java
