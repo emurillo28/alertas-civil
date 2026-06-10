@@ -8,206 +8,243 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * Entidad de dominio que representa un resultado de laboratorio clínico.
+ * Domain entity representing a clinical laboratory result.
  *
- * <p>Mapea al patrón Single-Table de DynamoDB:
+ * <p>Maps to DynamoDB Single-Table pattern:
  * <ul>
  *   <li>PK: PATIENT#&lt;PatientId&gt;</li>
  *   <li>SK: LAB#&lt;labId&gt;</li>
  * </ul>
  *
- * <p>Modelada como Java Record para garantizar inmutabilidad.
+ * <p>Modeled as Java Record to guarantee immutability.
  *
- * <h2>Campos extendidos (v2)</h2>
+ * <h2>Extended fields (v2)</h2>
  * <ul>
- *   <li>{@code estadoVisibilidad}: ciclo de vida de la notificación al médico.
- *       Default: {@link EstadoVisibilidad#PENDIENTE}.</li>
- *   <li>{@code notificaciones}: auditoría inline de todas las notificaciones enviadas.
- *       Se persiste en DynamoDB como lista dentro del mismo ítem (1 RCU de lectura).
- *       Default: lista vacía.</li>
+ *   <li>{@code visibilityStatus}: notification lifecycle to the physician.
+ *       Default: {@link VisibilityStatus#PENDING}.</li>
+ *   <li>{@code notifications}: inline audit of all notifications sent.
+ *       Persisted in DynamoDB as list within the same item (1 RCU read).
+ *       Default: empty list.</li>
  * </ul>
  *
- * <p>Los campos {@code estadoVisibilidad} y {@code notificaciones} admiten {@code null}
- * en el constructor compacto; se normalizan automáticamente a sus valores por defecto.
- * Esto garantiza compatibilidad con ítems DynamoDB legacy que no tengan estos campos.
+ * <p>Fields {@code visibilityStatus} and {@code notifications} accept {@code null}
+ * in the compact constructor; they are automatically normalized to their defaults.
+ * This ensures compatibility with legacy DynamoDB items lacking these fields.
  *
- * <p>El campo {@code version} soporta Control de Concurrencia Optimista (OCC)
- * mediante ConditionExpression en DynamoDB.
+ * <p>Field {@code version} supports Optimistic Concurrency Control (OCC)
+ * via ConditionExpression in DynamoDB.
  */
+@jakarta.inject.Named
 public record LabResult(
+
         String labId,
         PatientId patientId,
-        String tipoExamen,
-        Map<String, String> valoresAnaliticos,
+        String testType,
+        Map<String, String> analyticValues,
         Instant timestamp,
-        boolean alertaCritica,
-        String s3PathCompleto,
-        String resumenClinico,
+        boolean criticalAlert,
+        String s3Path,
+        String clinicalSummary,
         long version,
-        EstadoVisibilidad estadoVisibilidad,
-        List<NotificacionEnviada> notificaciones
+        VisibilityStatus visibilityStatus,
+        List<SentNotification> notifications
 ) {
 
     /**
-     * Constructor compacto con validaciones defensivas.
-     * Normaliza nulls en campos opcionales a sus valores por defecto.
+     * Compact constructor with defensive validations.
+     * Normalizes nulls in optional fields to their default values.
      */
     public LabResult {
-        Objects.requireNonNull(labId, "labId no puede ser nulo");
+        Objects.requireNonNull(labId, "labId cannot be null");
         if (labId.isBlank()) {
-            throw new IllegalArgumentException("labId no puede estar vacío");
+            throw new IllegalArgumentException("labId cannot be blank");
         }
-        Objects.requireNonNull(patientId, "patientId no puede ser nulo");
-        Objects.requireNonNull(tipoExamen, "tipoExamen no puede ser nulo");
-        if (tipoExamen.isBlank()) {
-            throw new IllegalArgumentException("tipoExamen no puede estar vacío");
+        Objects.requireNonNull(patientId, "patientId cannot be null");
+        Objects.requireNonNull(testType, "testType cannot be null");
+        if (testType.isBlank()) {
+            throw new IllegalArgumentException("testType cannot be blank");
         }
-        Objects.requireNonNull(valoresAnaliticos, "valoresAnaliticos no puede ser nulo");
-        if (valoresAnaliticos.isEmpty()) {
+        Objects.requireNonNull(analyticValues, "analyticValues cannot be null");
+        if (analyticValues.isEmpty()) {
             throw new IllegalArgumentException(
-                    "valoresAnaliticos no puede estar vacío: debe contener al menos un resultado analítico");
+                    "analyticValues cannot be empty: must contain at least one analytical result");
         }
-        // Copia defensiva para garantizar inmutabilidad del mapa
-        valoresAnaliticos = Map.copyOf(valoresAnaliticos);
-        Objects.requireNonNull(timestamp, "timestamp no puede ser nulo");
-        Objects.requireNonNull(s3PathCompleto, "s3PathCompleto no puede ser nulo");
-        if (s3PathCompleto.isBlank()) {
-            throw new IllegalArgumentException("s3PathCompleto no puede estar vacío");
+        // Defensive copy to guarantee map immutability
+        analyticValues = Map.copyOf(analyticValues);
+        Objects.requireNonNull(timestamp, "timestamp cannot be null");
+        Objects.requireNonNull(s3Path, "s3Path cannot be null");
+        if (s3Path.isBlank()) {
+            throw new IllegalArgumentException("s3Path cannot be blank");
         }
         if (version < 0) {
             throw new IllegalArgumentException(
-                    "version debe ser >= 0. Recibido: %d".formatted(version));
+                    "version must be >= 0. Received: %d".formatted(version));
         }
 
-        // Normalización de campos opcionales con valores por defecto
-        // Permite compatibilidad con ítems DynamoDB legacy sin estos campos
-        if (estadoVisibilidad == null) estadoVisibilidad = EstadoVisibilidad.PENDIENTE;
-        if (notificaciones == null) notificaciones = List.of();
-        notificaciones = List.copyOf(notificaciones); // copia defensiva inmutable
-        // resumenClinico puede ser nulo (aún no generado por el flujo de IA)
+        // Normalization of optional fields with default values
+        // Allows compatibility with legacy DynamoDB items without these fields
+        if (visibilityStatus == null) visibilityStatus = VisibilityStatus.PENDING;
+        if (notifications == null) notifications = List.of();
+        notifications = List.copyOf(notifications); // defensive immutable copy
+        // clinicalSummary may be null (not yet generated by AI flow)
     }
 
-    // ─── Claves DynamoDB ────────────────────────────────────────────────
+    // ─── DynamoDB Keys ────────────────────────────────────────────────
 
     /**
-     * Genera la clave de ordenamiento (SK) para el modelo Single-Table.
+     * Generates the sort key (SK) for Single-Table model.
      *
-     * @return cadena con formato LAB#&lt;labId&gt;
+     * @return string with format LAB#&lt;labId&gt;
      */
     public String toDynamoSortKey() {
         return "LAB#" + labId;
     }
 
-    // ─── Métodos with* (builders funcionales inmutables) ────────────────
+    // ─── with* functional immutable builders ───────────────────────────
 
     /**
-     * Crea un nuevo LabResult con la versión incrementada para OCC.
+     * Creates a new LabResult with incremented version for OCC.
      *
-     * @return nueva instancia con version + 1
+     * @return new instance with version + 1
+     public LabResult withResumenClinico(String newSummary) {
+         Objects.requireNonNull(newSummary, "Clinical summary cannot be null");
+         return new LabResult(
+                 labId, patientId, testType, analyticValues,
+                 timestamp, criticalAlert, s3Path, newSummary,
+                 version, visibilityStatus, notifications
+         );
+     }
+
+     /**
+      * English alias for {@link #withResumenClinico(String)}.
+      */
+     public LabResult withClinicalSummary(String newSummary) {
+         return withResumenClinico(newSummary);
+     }
+
+     /**
+      * Creates a new LabResult with updated critical alert flag.
+      */
+     * @param newSummary generated clinical summary text
+     * @return new instance with clinical summary set
      */
-    public LabResult withIncrementedVersion() {
+    public LabResult withResumenClinico(String newSummary) {
+        Objects.requireNonNull(newSummary, "Clinical summary cannot be null");
         return new LabResult(
-                labId, patientId, tipoExamen, valoresAnaliticos,
-                timestamp, alertaCritica, s3PathCompleto, resumenClinico,
-                version + 1, estadoVisibilidad, notificaciones
+                labId, patientId, testType, analyticValues,
+                timestamp, criticalAlert, s3Path, newSummary,
+                version, visibilityStatus, notifications
         );
     }
 
     /**
-     * Crea un nuevo LabResult con el resumen clínico actualizado.
-     *
-     * @param nuevoResumen texto del resumen clínico generado
-     * @return nueva instancia con el resumen clínico establecido
+     * English alias for {@link #withResumenClinico(String)}.
      */
-    public LabResult withResumenClinico(String nuevoResumen) {
-        Objects.requireNonNull(nuevoResumen, "El resumen clínico no puede ser nulo");
+    public LabResult withClinicalSummary(String newSummary) {
+        return withResumenClinico(newSummary);
+    }
+
+    /**
+     * Creates a new LabResult with updated critical alert flag.
+     */
+     * @param isCriticalAlert true if result exceeds danger thresholds
+     * @return new instance with updated critical alert flag
+     public LabResult withResumenClinico(String newSummary) {
+         Objects.requireNonNull(newSummary, "Clinical summary cannot be null");
+         return new LabResult(
+                 labId, patientId, testType, analyticValues,
+                 timestamp, criticalAlert, s3Path, newSummary,
+                 version, visibilityStatus, notifications
+         );
+     }
+
+     /**
+      * English alias for {@link #withResumenClinico(String)}.
+      */
+     public LabResult withClinicalSummary(String newSummary) {
+         return withResumenClinico(newSummary);
+     }
+
+     /**
+      * Creates a new LabResult with updated critical alert flag.
+      */
+     * <p>Used by {@code AcknowledgeLabReadService} and {@code NotifyLabReadyService}
+     * to advance the cycle: PENDING → NOTIFIED → READ_CONFIRMED.
+     *
+     * @param newStatus new visibility status
+     * @return new instance with updated status
+     */
+    public LabResult withResumenClinico(String newSummary) {
+        Objects.requireNonNull(newSummary, "Clinical summary cannot be null");
         return new LabResult(
-                labId, patientId, tipoExamen, valoresAnaliticos,
-                timestamp, alertaCritica, s3PathCompleto, nuevoResumen,
-                version, estadoVisibilidad, notificaciones
+                labId, patientId, testType, analyticValues,
+                timestamp, criticalAlert, s3Path, newSummary,
+                version, visibilityStatus, notifications
         );
     }
 
     /**
-     * Crea un nuevo LabResult con el indicador de alerta crítica actualizado.
-     *
-     * @param esAlertaCritica true si el resultado supera umbrales de peligro
-     * @return nueva instancia con el indicador de alerta actualizado
+     * English alias for {@link #withResumenClinico(String)}.
      */
-    public LabResult withAlertaCritica(boolean esAlertaCritica) {
-        return new LabResult(
-                labId, patientId, tipoExamen, valoresAnaliticos,
-                timestamp, esAlertaCritica, s3PathCompleto, resumenClinico,
-                version, estadoVisibilidad, notificaciones
-        );
+    public LabResult withClinicalSummary(String newSummary) {
+        return withResumenClinico(newSummary);
     }
 
     /**
-     * Crea un nuevo LabResult con el estado de visibilidad actualizado.
-     *
-     * <p>Usado por {@code AcknowledgeLabReadService} y {@code NotifyLabReadyService}
-     * para avanzar el ciclo: PENDIENTE → NOTIFICADO → CONFIRMADO_LECTURA.
-     *
-     * @param nuevoEstado nuevo estado de visibilidad
-     * @return nueva instancia con el estado actualizado
+     * Creates a new LabResult with updated critical alert flag.
      */
-    public LabResult withEstadoVisibilidad(EstadoVisibilidad nuevoEstado) {
-        Objects.requireNonNull(nuevoEstado, "El estado de visibilidad no puede ser nulo");
-        return new LabResult(
-                labId, patientId, tipoExamen, valoresAnaliticos,
-                timestamp, alertaCritica, s3PathCompleto, resumenClinico,
-                version, nuevoEstado, notificaciones
-        );
-    }
-
-    /**
-     * Crea un nuevo LabResult con una notificación adicional en el historial.
+     * <p>Uses a new immutable list including all previous notifications
+     * plus the new one, preserving insertion order.
      *
-     * <p>Usa una nueva lista inmutable que incluye todas las notificaciones
-     * anteriores más la nueva, preservando el orden de inserción.
-     *
-     * @param nuevaNotificacion notificación a agregar al historial
-     * @return nueva instancia con la notificación registrada
+     * @param newNotification notification to add to history
+     * @return new instance with notification registered
      */
-    public LabResult withNotificacionAgregada(NotificacionEnviada nuevaNotificacion) {
-        Objects.requireNonNull(nuevaNotificacion, "La notificación no puede ser nula");
-        List<NotificacionEnviada> nuevaLista = new ArrayList<>(notificaciones);
-        nuevaLista.add(nuevaNotificacion);
-        return new LabResult(
-                labId, patientId, tipoExamen, valoresAnaliticos,
-                timestamp, alertaCritica, s3PathCompleto, resumenClinico,
-                version, estadoVisibilidad, nuevaLista
-        );
-    }
+    public LabResult withNotificationAdded(SentNotification newNotification) {
+        Objects.requireNonNull(newNotification, "Notification cannot be null");
+        public LabResult withResumenClinico(String newSummary) {
+            Objects.requireNonNull(newSummary, "Clinical summary cannot be null");
+            return new LabResult(
+                    labId, patientId, testType, analyticValues,
+                    timestamp, criticalAlert, s3Path, newSummary,
+                    version, visibilityStatus, notifications
+            );
+        }
 
-    // ─── Factory methods ────────────────────────────────────────────────
+        /**
+         * English alias for {@link #withResumenClinico(String)}.
+         */
+        public LabResult withClinicalSummary(String newSummary) {
+            return withResumenClinico(newSummary);
+        }
 
-    /**
-     * Crea un nuevo LabResult con UUID generado automáticamente y versión inicial 0.
+        /**
+         * Creates a new LabResult with updated critical alert flag.
+         */
+     * Creates a new LabResult with auto-generated UUID and initial version 0.
      *
-     * <p>El estado de visibilidad inicia en PENDIENTE y sin notificaciones.
-     * El resumen clínico se genera en un flujo posterior por IA.
+     * <p>Visibility status starts at PENDING with no notifications.
+     * Clinical summary is generated in a subsequent AI flow.
      */
     public static LabResult create(
             PatientId patientId,
-            String tipoExamen,
-            Map<String, String> valoresAnaliticos,
+            String testType,
+            Map<String, String> analyticValues,
             Instant timestamp,
-            boolean alertaCritica,
-            String s3PathCompleto
+            boolean criticalAlert,
+            String s3Path
     ) {
         return new LabResult(
                 UUID.randomUUID().toString(),
                 patientId,
-                tipoExamen,
-                valoresAnaliticos,
+                testType,
+                analyticValues,
                 timestamp,
-                alertaCritica,
-                s3PathCompleto,
-                null,                           // resumenClinico: se genera después
-                0L,                             // version inicial para OCC
-                EstadoVisibilidad.PENDIENTE,    // estado inicial
-                List.of()                       // sin notificaciones al crear
+                criticalAlert,
+                s3Path,
+                null,                           // clinicalSummary: generated later
+                0L,                             // initial version for OCC
+                VisibilityStatus.PENDING,       // initial status
+                List.of()                       // no notifications at creation
         );
     }
 }

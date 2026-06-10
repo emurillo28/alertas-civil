@@ -1,8 +1,8 @@
 package com.hospital.alertas.infrastructure.adapters.inbound;
 
-import com.hospital.alertas.domain.model.EstadoVisibilidad;
 import com.hospital.alertas.domain.model.LabResult;
 import com.hospital.alertas.domain.model.PatientId;
+import com.hospital.alertas.domain.model.VisibilityStatus;
 
 import java.time.Instant;
 import java.util.List;
@@ -10,23 +10,23 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * DTO (Data Transfer Object) para el payload de ingesta de laboratorios
- * recibido desde el API Gateway / cliente REST.
+ * DTO (Data Transfer Object) for laboratory ingestion payload
+ * received from API Gateway / REST client.
  *
- * <p>Actúa como anti-corruption layer entre el mundo exterior (JSON HTTP)
- * y el modelo de dominio ({@link LabResult}). Permite que el esquema JSON
- * evolucione independientemente del dominio.
+ * <p>Acts as anti-corruption layer between the outside world (JSON HTTP)
+ * and the domain model ({@link LabResult}). Allows JSON schema
+ * to evolve independently from the domain.
  *
- * <p>Ejemplo de payload JSON:
+ * <p>Example JSON payload:
  * <pre>{@code
  * {
  *   "patientId": "PAC001",
- *   "tipoExamen": "Biometria Hematica",
- *   "valoresAnaliticos": {
- *     "Hemoglobina": "14.5 g/dL",
- *     "Leucocitos": "7500 /uL"
+ *   "testType": "Complete Blood Count",
+ *   "analyticValues": {
+ *     "Hemoglobin": "14.5 g/dL",
+ *     "Leukocytes": "7500 /uL"
  *   },
- *   "s3PathCompleto": "s3://hc-laboratorios/2026/06/01/PAC001/BH-001.pdf",
+ *   "s3Path": "s3://hc-laboratories/2026/06/01/PAC001/BH-001.pdf",
  *   "timestamp": "2026-06-01T10:30:00Z"
  * }
  * }</pre>
@@ -34,38 +34,38 @@ import java.util.UUID;
 public record IngestLabRequest(
         String labId,
         String patientId,
-        String tipoExamen,
-        Map<String, String> valoresAnaliticos,
+        String testType,
+        Map<String, String> analyticValues,
         String timestamp,
-        Boolean alertaCritica,
-        String s3PathCompleto
+        Boolean criticalAlert,
+        String s3Path
 ) {
 
     /**
-     * Convierte el DTO del API al modelo de dominio.
+     * Converts the API DTO to the domain model.
      *
-     * <p>Aplica valores por defecto para campos opcionales:
+     * <p>Applies default values for optional fields:
      * <ul>
-     *   <li>{@code labId}: UUID aleatorio si no se proporciona</li>
-     *   <li>{@code timestamp}: {@code Instant.now()} si no se proporciona</li>
-     *   <li>{@code alertaCritica}: {@code false} (el servicio lo evaluará)</li>
+     *   <li>{@code labId}: random UUID if not provided</li>
+     *   <li>{@code timestamp}: {@code Instant.now()} if not provided</li>
+     *   <li>{@code criticalAlert}: {@code false} (service will evaluate)</li>
      * </ul>
      *
-     * @return instancia de {@link LabResult} con versión 0 (nuevo) y sin resumen clínico
+     * @return instance of {@link LabResult} with version 0 (new) and no clinical summary
      */
     public LabResult toDomain() {
         return new LabResult(
                 labId != null && !labId.isBlank() ? labId : UUID.randomUUID().toString(),
                 new PatientId(patientId),
-                tipoExamen,
-                valoresAnaliticos != null ? valoresAnaliticos : Map.of(),
+                testType,
+                analyticValues != null ? analyticValues : Map.of(),
                 timestamp != null ? Instant.parse(timestamp) : Instant.now(),
-                alertaCritica != null ? alertaCritica : false,
-                s3PathCompleto,
-                null,   // resumenClinico — se genera en un flujo posterior
-                0L,     // versión inicial para OCC
-                EstadoVisibilidad.PENDIENTE,    // estado inicial
-                List.of()                       // sin notificaciones al crear
+                criticalAlert != null ? criticalAlert : false,
+                s3Path,
+                null,   // clinicalSummary — generated in a subsequent flow
+                0L,     // initial version for OCC
+                VisibilityStatus.PENDING,    // initial status
+                List.of()                    // no notifications at creation
         );
     }
 }

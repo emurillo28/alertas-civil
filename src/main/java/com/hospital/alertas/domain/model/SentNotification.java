@@ -5,124 +5,137 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * Value Object inmutable que representa una notificación clínica enviada
- * a un médico o personal de salud, con auditoría completa del ciclo de vida.
+ * Immutable Value Object representing a clinical notification sent to a
+ * physician or healthcare staff member, with complete lifecycle audit trail.
  *
- * <p>Se persiste como elemento de lista en el atributo {@code NotificacionesEnviadas}
- * dentro del ítem LAB# de DynamoDB (Single-Table inline). Garantiza trazabilidad
- * sin queries adicionales: 1 RCU cubre lab + todas sus notificaciones.
+ * <p>Persisted as a list element in the {@code SentNotifications} attribute
+ * within the LAB# item in DynamoDB (Single-Table inline). Ensures traceability
+ * without additional queries: 1 RCU covers lab + all its notifications.
  *
- * <p>Modelo de ciclo de vida:
+ * <p>Lifecycle model:
  * <pre>
- *   create() → PENDIENTE
- *   asSent() → ENVIADA      (canal confirmó entrega)
- *   asRead() → LEIDA        (médico confirmó lectura)
- *   asFailed() → FALLIDA    (entrega fallida definitiva)
+ *   create() → PENDING
+ *   asSent() → SENT         (channel confirmed delivery)
+ *   asRead() → READ         (physician confirmed reading)
+ *   asFailed() → FAILED     (definitive delivery failure)
  * </pre>
  *
- * <p>El campo {@code notificationId} actúa como clave de idempotencia:
- * si el adaptador SQS reenvía el mismo mensaje, el servicio puede detectar
- * que la notificación ya fue registrada y no duplicarla.
+ * <p>The {@code notificationId} field acts as an idempotency key:
+ * if the SQS adapter re-delivers the same message, the service can detect
+ * that the notification was already registered and avoid duplication.
  */
 public record SentNotification(
+
+        /** Unique identifier for this notification (UUID). */
         String notificationId,
+
+        /** Destination identifier (e.g., physician ID "DR001", phone number, email). */
         String recipient,
+
+        /** Communication channel used. */
         NotificationChannel channel,
+
+        /** Current lifecycle status. */
         NotificationStatus status,
+
+        /** Timestamp when notification was queued/sent. */
         Instant timestampSend,
-        Instant timestampRead  // nullable — solo presente cuando status = LEIDA
+
+        /** Timestamp when physician confirmed reading — only present when status = READ. */
+        Instant timestampRead
+
 ) {
 
     /**
-     * Constructor compacto con validaciones defensivas de dominio.
+     * Compact constructor with defensive domain validations.
      */
     public SentNotification {
-        Objects.requireNonNull(notificationId, "notificationId no puede ser nulo");
+        Objects.requireNonNull(notificationId, "notificationId cannot be null");
         if (notificationId.isBlank()) {
-            throw new IllegalArgumentException("notificationId no puede estar vacío");
+            throw new IllegalArgumentException("notificationId cannot be blank");
         }
-        Objects.requireNonNull(recipient, "recipient no puede ser nulo");
+        Objects.requireNonNull(recipient, "recipient cannot be null");
         if (recipient.isBlank()) {
-            throw new IllegalArgumentException("recipient no puede estar vacío");
+            throw new IllegalArgumentException("recipient cannot be blank");
         }
-        Objects.requireNonNull(channel, "channel no puede ser nulo");
-        Objects.requireNonNull(status, "status no puede ser nulo");
-        Objects.requireNonNull(timestampSend, "timestampSend no puede ser nulo");
-        // Invariante de negocio: lectura requiere timestamp
-        if (status == NotificationStatus.LEIDA && timestampRead == null) {
+        Objects.requireNonNull(channel, "channel cannot be null");
+        Objects.requireNonNull(status, "status cannot be null");
+        Objects.requireNonNull(timestampSend, "timestampSend cannot be null");
+        // Business invariant: read requires timestamp
+        if (status == NotificationStatus.READ && timestampRead == null) {
             throw new IllegalArgumentException(
-                    "timestampRead es obligatorio cuando status = LEIDA. " +
-                    "Use asRead(Instant) para la transición correcta.");
+                    "timestampRead is required when status = READ. " +
+                    "Use asRead(Instant) for the correct transition.");
         }
-        // Invariante de negocio: estados sin lectura no deben tener timestamp de lectura
-        if (status != NotificationStatus.LEIDA && timestampRead != null) {
+        // Business invariant: non-read statuses must not have read timestamp
+        if (status != NotificationStatus.READ && timestampRead != null) {
             throw new IllegalArgumentException(
-                    "timestampRead solo es válido cuando status = LEIDA. " +
-                    "Estado actual: " + status);
+                    "timestampRead is only valid when status = READ. " +
+                    "Current status: " + status);
         }
     }
 
     // ─── Factory methods ────────────────────────────────────────────────
 
     /**
-     * Crea una notificación recién encolada en estado PENDIENTE.
+     * Creates a newly queued notification in PENDING status.
      *
-     * @param recipient ID del médico o personal destino (ej. "DR001")
-     * @param channel   medio de comunicación seleccionado
-     * @return instancia con UUID generado automáticamente y timestamp actual
+     * @param recipient ID of the target physician or staff (e.g., "DR001")
+     * @param channel   selected communication medium
+     * @return instance with auto-generated UUID and current timestamp
      */
     public static SentNotification create(String recipient, NotificationChannel channel) {
-        Objects.requireNonNull(recipient, "recipient no puede ser nulo");
-        Objects.requireNonNull(channel, "channel no puede ser nulo");
+        Objects.requireNonNull(recipient, "recipient cannot be null");
+        Objects.requireNonNull(channel, "channel cannot be null");
         if (recipient.isBlank()) {
-            throw new IllegalArgumentException("recipient no puede estar vacío");
+            throw new IllegalArgumentException("recipient cannot be blank");
         }
         return new SentNotification(
                 UUID.randomUUID().toString(),
                 recipient,
                 channel,
-                NotificationStatus.PENDIENTE,
+                NotificationStatus.PENDING,
                 Instant.now(),
                 null
         );
     }
 
-    // ─── Métodos de transición de estado (devuelven nuevas instancias) ──
+    // ─── State transition methods (return new instances) ────────────────
 
     /**
-     * Crea una nueva instancia marcada como ENVIADA.
-     * El canal externo confirmó la entrega del mensaje.
+     * Creates a new instance marked as SENT.
+     * The external channel confirmed message delivery.
      *
-     * @return nueva instancia con status ENVIADA
+     * @return new instance with status SENT
      */
     public SentNotification asSent() {
         return new SentNotification(notificationId, recipient, channel,
-                NotificationStatus.ENVIADA, timestampSend, null);
+                NotificationStatus.SENT, timestampSend, null);
     }
 
     /**
-     * Crea una nueva instancia marcada como LEIDA con auditoría de confirmación.
+     * Creates a new instance marked as READ with confirmation audit.
      *
-     * @param timestampConfirmacion instante en que el médico confirmó la lectura
-     * @return nueva instancia con status LEIDA y timestamp de confirmación
+     * @param timestampConfirmation instant when physician confirmed reading
+     * @return new instance with status READ and confirmation timestamp
      */
-    public SentNotification asRead(Instant timestampConfirmacion) {
-        Objects.requireNonNull(timestampConfirmacion, "timestampConfirmacion no puede ser nulo");
+    public SentNotification asRead(Instant timestampConfirmation) {
+        Objects.requireNonNull(timestampConfirmation, "timestampConfirmation cannot be null");
         return new SentNotification(
                 notificationId, recipient, channel,
-                NotificationStatus.LEIDA,
-                timestampSend, timestampConfirmacion
+                NotificationStatus.READ,
+                timestampSend, timestampConfirmation
         );
     }
 
     /**
-     * Crea una nueva instancia marcada como FALLIDA.
-     * No se reintenta automáticamente; requiere intervención manual o nuevo envío.
+     * Creates a new instance marked as FAILED.
+     * Not retried automatically; requires manual intervention or new send.
      *
-     * @return nueva instancia con status FALLIDA
+     * @return new instance with status FAILED
      */
     public SentNotification asFailed() {
         return new SentNotification(notificationId, recipient, channel,
-                NotificationStatus.FALLIDA, timestampSend, timestampRead);
+                NotificationStatus.FAILED, timestampSend, timestampRead);
     }
 }

@@ -3,33 +3,33 @@ package com.hospital.alertas.application.ports.inbound;
 import com.hospital.alertas.application.service.NotifyLabReadyCommand;
 
 /**
- * Puerto de entrada (inbound) para el caso de uso de notificación de laboratorio listo.
+ * Inbound port for the notify-lab-ready use case.
  *
- * <p>Invocado por el adaptador HTTP ({@code NotifyLabHttpHandler}) cuando:
+ * <p>Invoked by the HTTP adapter ({@code NotifyLabHttpHandler}) when:
  * <ul>
- *   <li>El sistema externo del Hospital Civil notifica que un lab está disponible.</li>
- *   <li>Un operador dispara manualmente la notificación desde la interfaz.</li>
+ *   <li>The external Hospital Civil system notifies that a lab is available.</li>
+ *   <li>An operator manually triggers notification from the UI.</li>
  * </ul>
  *
- * <p>El caso de uso es idempotente por diseño: si el lab ya fue notificado,
- * registra la nueva notificación en el historial sin lanzar excepción.
+ * <p>The use case is idempotent by design: if the lab was already notified,
+ * it registers the new notification in history without throwing an exception.
  */
 public interface NotifyLabReadyUseCase {
 
     /**
-     * Ejecuta el flujo de notificación para un resultado de laboratorio.
+     * Executes the notification flow for a laboratory result.
      *
-     * <p>Flujo interno:
+     * <p>Internal flow:
      * <ol>
-     *   <li>Recupera el lab desde DynamoDB.</li>
-     *   <li>Crea una {@code SentNotification} en estado PENDIENTE.</li>
-     *   <li>Actualiza el lab en DynamoDB con la notificación y estado NOTIFICADO.</li>
-     *   <li>Encola la notificación en SQS para entrega por el canal externo.</li>
+     *   <li>Retrieves the lab from DynamoDB.</li>
+     *   <li>Creates a {@code SentNotification} in PENDING status.</li>
+     *   <li>Updates the lab in DynamoDB with the notification and NOTIFIED status.</li>
+     *   <li>Enqueues the notification in SQS for delivery via external channel.</li>
      * </ol>
      *
-     * @param command datos de la notificación a enviar (no nulo)
+     * @param command notification data to send (not null)
      * @throws com.hospital.alertas.domain.exception.LabValidationException
-     *         si el lab no existe o los datos del comando son inválidos
+     *         if lab doesn't exist or command data is invalid
      */
     void execute(NotifyLabReadyCommand command);
 }

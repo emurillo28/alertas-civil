@@ -5,74 +5,74 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Agregado de solo lectura que representa la línea de tiempo clínica completa de un paciente.
+ * Read-only aggregate representing the complete clinical timeline of a patient.
  *
- * <p>Combina los datos demográficos (METADATA) con el historial de resultados de laboratorio (LAB#)
- * en un único objeto de dominio, optimizado para consultas de expediente completo.
+ * <p>Combines demographic data (METADATA) with laboratory result history (LAB#)
+ * into a single domain object, optimized for complete record queries.
  *
- * <p>Se construye mediante {@link LabPersistencePort#obtenerExpedienteCompleto(PatientId)}
- * que realiza una sola query DynamoDB por PK y filtra por SK prefixes.
+ * <p>Built via {@link LabPersistencePort#findCompleteRecord(PatientId)}
+ * which performs a single DynamoDB query by PK and filters by SK prefixes.
  */
 public record PatientTimeline(
         PatientId patientId,
-        String nombre,
-        Instant fechaNacimiento,
-        String historialClinico,
-        List<LabResult> laboratorios
+        String name,
+        Instant dateOfBirth,
+        String clinicalHistory,
+        List<LabResult> labs
 ) {
 
     /**
-     * Constructor compacto con validaciones defensivas.
+     * Compact constructor with defensive validations.
      */
     public PatientTimeline {
-        Objects.requireNonNull(patientId, "patientId no puede ser nulo");
-        // nombre, fechaNacimiento, historialClinico pueden ser null si el METADATA no existe aún
-        if (laboratorios == null) {
-            throw new IllegalArgumentException("La lista de laboratorios no puede ser nula");
+        Objects.requireNonNull(patientId, "patientId cannot be null");
+        // name, dateOfBirth, clinicalHistory may be null if METADATA doesn't exist yet
+        if (labs == null) {
+            throw new IllegalArgumentException("Laboratories list cannot be null");
         }
-        laboratorios = List.copyOf(laboratorios); // copia defensiva inmutable
+        labs = List.copyOf(labs); // defensive immutable copy
     }
 
     /**
-     * Obtiene el resultado de laboratorio más reciente.
+     * Gets the most recent laboratory result.
      *
-     * @return {@link Optional} con el lab más reciente por timestamp, o vacío si no hay laboratorios
+     * @return {@link Optional} with the latest lab by timestamp, or empty if no labs
      */
-    public java.util.Optional<LabResult> laboratorioMasReciente() {
-        return laboratorios.stream()
+    public java.util.Optional<LabResult> getLatestLab() {
+        return labs.stream()
                 .max(java.util.Comparator.comparing(LabResult::timestamp));
     }
 
     /**
-     * Obtiene todos los laboratorios con alerta crítica.
+     * Gets all laboratories with critical alert.
      *
-     * @return lista inmutable de laboratorios con {@code alertaCritica == true}
+     * @return immutable list of laboratories with {@code criticalAlert == true}
      */
-    public List<LabResult> laboratoriosConAlertaCritica() {
-        return laboratorios.stream()
-                .filter(LabResult::alertaCritica)
+    public List<LabResult> getCriticalAlertLabs() {
+        return labs.stream()
+                .filter(LabResult::criticalAlert)
                 .toList();
     }
 
     /**
-     * Obtiene laboratorios en estado de visibilidad específico.
+     * Gets laboratories with a specific visibility status.
      *
-     * @param estado estado de visibilidad a filtrar
-     * @return lista inmutable de laboratorios con el estado dado
+     * @param status visibility status to filter by
+     * @return immutable list of laboratories with the given status
      */
-    public List<LabResult> laboratoriosPorEstadoVisibilidad(EstadoVisibilidad estado) {
-        Objects.requireNonNull(estado, "estado no puede ser nulo");
-        return laboratorios.stream()
-                .filter(lab -> lab.estadoVisibilidad() == estado)
+    public List<LabResult> getLabsByVisibilityStatus(VisibilityStatus status) {
+        Objects.requireNonNull(status, "status cannot be null");
+        return labs.stream()
+                .filter(lab -> lab.visibilityStatus() == status)
                 .toList();
     }
 
     /**
-     * Verifica si el paciente tiene datos demográficos registrados.
+     * Checks if patient has demographic data registered.
      *
-     * @return true si existe registro METADATA con nombre no nulo
+     * @return true if METADATA record exists with non-null name
      */
-    public boolean tieneDatosDemograficos() {
-        return nombre != null && !nombre.isBlank();
+    public boolean hasDemographics() {
+        return name != null && !name.isBlank();
     }
 }

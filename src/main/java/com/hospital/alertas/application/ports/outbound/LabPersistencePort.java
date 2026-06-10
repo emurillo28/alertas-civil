@@ -1,110 +1,110 @@
 package com.hospital.alertas.application.ports.outbound;
 
 import com.hospital.alertas.domain.model.LabResult;
-import com.hospital.alertas.domain.model.NotificacionEnviada;
 import com.hospital.alertas.domain.model.PatientId;
 import com.hospital.alertas.domain.model.PatientTimeline;
-import com.hospital.alertas.domain.model.EstadoVisibilidad;
+import com.hospital.alertas.domain.model.SentNotification;
+import com.hospital.alertas.domain.model.VisibilityStatus;
 
 import java.util.Optional;
 
 /**
- * Puerto de salida (outbound) para la persistencia de resultados de laboratorio.
+ * Outbound port for persistence of clinical laboratory results.
  *
- * <p>Define el contrato que debe implementar cualquier adaptador de persistencia
- * (DynamoDB, base de datos en memoria para tests, etc.) siguiendo el principio
- * de inversión de dependencias de la Arquitectura Hexagonal.
+ * <p>Defines the contract that any persistence adapter must implement
+ * (DynamoDB, in-memory database for tests, etc.) following the Dependency
+ * Inversion Principle of Hexagonal Architecture.
  *
- * <p>Todos los métodos son <strong>síncronos y bloqueantes</strong> por diseño.
- * La concurrencia se gestiona nativamente mediante Project Loom (hilos virtuales)
- * en la capa de infraestructura, no mediante APIs reactivas.
+ * <p>All methods are <strong>synchronous and blocking</strong> by design.
+ * Concurrency is managed natively via Project Loom (virtual threads)
+ * in the infrastructure layer, not through reactive APIs.
  *
- * <p><strong>Restricción arquitectónica:</strong> Esta interfaz pertenece a la capa
- * de aplicación y tiene prohibido importar cualquier paquete de AWS SDK
- * ({@code software.amazon.awssdk.*}) o anotaciones de Quarkus.
+ * <p><strong>Architectural constraint:</strong> This interface belongs to the
+ * application layer and is forbidden from importing any AWS SDK
+ * ({@code software.amazon.awssdk.*}) packages or Quarkus annotations.
  *
- * <p>Semántica clínica en lugar de CRUD genérico para expresar dominio médico.
+ * <p>Clinical semantics instead of generic CRUD to express medical domain.
  */
 public interface LabPersistencePort {
 
     /**
-     * Guarda un resultado de laboratorio clínico (crea o actualiza con OCC).
+     * Saves a clinical laboratory result (creates or updates with OCC).
      *
-     * <p>La implementación debe garantizar Control de Concurrencia Optimista (OCC)
-     * utilizando el campo {@link LabResult#version()} mediante
-     * {@code ConditionExpression} de DynamoDB.
+     * <p>The implementation must guarantee Optimistic Concurrency Control (OCC)
+     * using the {@link LabResult#version()} field via
+     * DynamoDB {@code ConditionExpression}.
      *
-     * <p>Para alertas críticas, escribe GSI1_PK = 'STATUS#PENDING' para
-     * habilitar consulta eficiente de laboratorios pendientes de notificar.
+     * <p>For critical alerts, writes GSI1_PK = 'STATUS#PENDING' to
+     * enable efficient query of labs pending notification.
      *
-     * @param lab resultado de laboratorio a persistir (no nulo, contiene patientId)
+     * @param lab laboratory result to persist (not null, contains patientId)
      * @throws com.hospital.alertas.domain.exception.LabValidationException
-     *         si los datos del laboratorio violan invariantes de negocio
-     * @throws OptimisticLockException si ocurre un conflicto de concurrencia (OCC)
-     * @throws DatabaseThrottledException si la capacidad de la base de datos se excede
+     *         if laboratory data violates business invariants
+     * @throws OptimisticLockException if an optimistic concurrency conflict occurs
+     * @throws DatabaseThrottledException if database capacity is exceeded
      */
     void saveLab(LabResult lab);
 
     /**
-     * Obtiene el resultado de laboratorio más reciente de un paciente.
+     * Retrieves the most recent laboratory result for a patient.
      *
-     * <p>La implementación debe consultar por PK = PATIENT#&lt;patientId&gt;
-     * con SK que comience con "LAB#" y ordenar descendentemente por timestamp
-     * para retornar el más reciente.
+     * <p>The implementation must query by PK = PATIENT#&lt;patientId&gt;
+     * with SK starting with "LAB#" and sort descending by timestamp
+     * to return the latest.
      *
-     * @param patientId identificador del paciente (no nulo)
-     * @return {@link Optional} con el laboratorio más reciente, o vacío
-     *         si el paciente no tiene laboratorios registrados
-     * @throws DatabaseThrottledException si la capacidad de lectura se excede
+     * @param patientId patient identifier (not null)
+     * @return {@link Optional} with the latest laboratory, or empty
+     *         if the patient has no registered laboratories
+     * @throws DatabaseThrottledException if read capacity is exceeded
      */
-    Optional<LabResult> obtenerUltimoLaboratorio(PatientId patientId);
+    Optional<LabResult> findLatestByPatient(PatientId patientId);
 
     /**
-     * Obtiene el expediente clínico completo del paciente.
+     * Retrieves the complete patient clinical record.
      *
-     * <p>Realiza una sola query por PK = PATIENT#&lt;patientId&gt; y filtra
-     * SK = METADATA (demográficos) y SK comenzando con LAB# (historial).
+     * <p>Performs a single query by PK = PATIENT#&lt;patientId&gt; and filters
+     * SK = METADATA (demographics) and SK starting with LAB# (history).
      *
-     * @param patientId identificador del paciente (no nulo)
-     * @return {@link Optional} con {@link PatientTimeline} conteniendo
-     *         datos demográficos y lista de laboratorios, o vacío si no existe
-     * @throws DatabaseThrottledException si la capacidad de lectura se excede
+     * @param patientId patient identifier (not null)
+     * @return {@link Optional} with {@link PatientTimeline} containing
+     *         demographic data and list of laboratories, or empty if not found
+     * @throws DatabaseThrottledException if read capacity is exceeded
      */
-    Optional<PatientTimeline> obtenerExpedienteCompleto(PatientId patientId);
+    Optional<PatientTimeline> findCompleteRecord(PatientId patientId);
 
     /**
-     * Actualiza el estado de visibilidad de un laboratorio usando OCC.
+     * Updates the visibility status of a laboratory using OCC.
      *
-     * <p>Ejecuta UpdateItem con ConditionExpression sobre el campo Version.
-     * Transiciones válidas: PENDIENTE → NOTIFICADO → CONFIRMADO_LECTURA.
+     * <p>Executes UpdateItem with ConditionExpression on the Version field.
+     * Valid transitions: PENDING → NOTIFIED → READ_CONFIRMED.
      *
-     * @param patientId     identificador del paciente
-     * @param labId         identificador del laboratorio
-     * @param nuevoEstado   nuevo estado de visibilidad
-     * @param expectedVersion versión esperada para OCC
-     * @throws OptimisticLockException si la versión no coincide (conflicto concurrente)
-     * @throws DatabaseThrottledException si la capacidad de escritura se excede
+     * @param patientId     patient identifier
+     * @param labId         laboratory identifier
+     * @param newStatus     new visibility status
+     * @param expectedVersion expected version for OCC
+     * @throws OptimisticLockException if version doesn't match (concurrent conflict)
+     * @throws DatabaseThrottledException if write capacity is exceeded
      */
-    void actualizarEstadoVisibilidad(PatientId patientId, String labId,
-                                      EstadoVisibilidad nuevoEstado, long expectedVersion);
+    void updateVisibilityStatus(PatientId patientId, String labId,
+                                 VisibilityStatus newStatus, long expectedVersion);
 
     /**
-     * Registra una notificación en el historial del laboratorio y actualiza
-     * el estado de visibilidad en una operación atómica con OCC.
+     * Registers a notification in the laboratory history and updates
+     * the visibility status in an atomic operation with OCC.
      *
-     * <p>Agrega la notificación a la lista {@code NotificacionesEnviadas},
-     * actualiza {@code EstadoVisibilidad} y incrementa {@code Version}
-     * mediante UpdateItem con ConditionExpression.
+     * <p>Adds the notification to the {@code SentNotifications} list,
+     * updates {@code VisibilityStatus} and increments {@code Version}
+     * via UpdateItem with ConditionExpression.
      *
-     * @param patientId       identificador del paciente
-     * @param labId           identificador del laboratorio
-     * @param notificacion    notificación a registrar
-     * @param nuevoEstado     nuevo estado de visibilidad (usualmente NOTIFICADO)
-     * @param expectedVersion versión esperada para OCC
-     * @throws OptimisticLockException si la versión no coincide
-     * @throws DatabaseThrottledException si la capacidad de escritura se excede
+     * @param patientId       patient identifier
+     * @param labId           laboratory identifier
+     * @param notification    notification to register
+     * @param newStatus       new visibility status (usually NOTIFIED)
+     * @param expectedVersion expected version for OCC
+     * @throws OptimisticLockException if version doesn't match
+     * @throws DatabaseThrottledException if write capacity is exceeded
      */
-    void registrarNotificacion(PatientId patientId, String labId,
-                                NotificacionEnviada notificacion,
-                                EstadoVisibilidad nuevoEstado, long expectedVersion);
+    void registerNotification(PatientId patientId, String labId,
+                               SentNotification notification,
+                               VisibilityStatus newStatus, long expectedVersion);
 }

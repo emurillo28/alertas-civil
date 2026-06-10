@@ -1,33 +1,32 @@
 package com.hospital.alertas.domain.model;
 
 /**
- * Estado del ciclo de vida de una {@link NotificacionEnviada} individual.
+ * Lifecycle status of an individual {@link SentNotification}.
  *
- * <p>Flujo esperado:
+ * <p>Expected flow:
  * <pre>
- *   PENDIENTE → ENVIADA → LEIDA
- *                       ↘ FALLIDA
+ *   PENDING → SENT → READ
+ *                 ↘ FAILED
  * </pre>
  *
- * <p>Las transiciones inválidas (ej. LEIDA → PENDIENTE) deben ser
- * rechazadas por la lógica de negocio en el dominio, no por el adaptador.
+ * <p>Invalid transitions (e.g., READ → PENDING) must be
+ * rejected by domain business logic, not by the adapter.
  */
 public enum NotificationStatus {
 
-    /** Notificación encolada en SQS, aún no procesada por el canal de entrega. */
-    PENDIENTE,
+    /** Notification queued in SQS, not yet processed by the delivery channel. */
+    PENDING,
 
-    /** El canal externo confirmó la entrega (SMS enviado, email aceptado, push recibido). */
-    ENVIADA,
+    /** The external channel confirmed delivery (SMS sent, email accepted, push received). */
+    SENT,
 
-    /** El destinatario confirmó la lectura explícitamente desde la aplicación. */
-    LEIDA,
+    /** The recipient explicitly confirmed reading from the application. */
+    READ,
 
     /**
-     * El canal externo reportó fallo definitivo.
-     * Ejemplos: número telefónico inválido, email rebotado (hard bounce),
-     * token push expirado.
-     * No se reintenta automáticamente.
+     * The external channel reported definitive failure.
+     * Examples: invalid phone number, email hard bounce, expired push token.
+     * Not retried automatically.
      */
-    FALLIDA
+    FAILED
 }

@@ -4,42 +4,42 @@ import com.hospital.alertas.domain.model.PatientId;
 import java.util.Objects;
 
 /**
- * Comando de entrada para el caso de uso de notificación de laboratorio listo.
+ * Input command for the notify-lab-ready use case.
  * <p>
- * Encapsula los datos mínimos necesarios para disparar la notificación de un
- * resultado de laboratorio hacia el canal correspondiente (email, SMS, push, etc.).
+ * Encapsulates the minimum necessary data to trigger the notification of a
+ * laboratory result to the corresponding channel (email, SMS, push, etc.).
  *
- * <p>Inmutable por diseño (Java Record). Validación defensiva en constructor compacto.
+ * <p>Immutable by design (Java Record). Defensive validation in compact constructor.
  */
 public record NotifyLabReadyCommand(
 
-        /** Identificador único del resultado de laboratorio (no nulo, no vacío). */
+        /** Unique laboratory result identifier (not null, not blank). */
         String labId,
 
-        /** Identificador del paciente propietario del laboratorio (no nulo). */
+        /** Owner patient identifier (not null). */
         PatientId patientId,
 
-        /** Canal de notificación a utilizar (ej: EMAIL, SMS, PUSH). Opcional: si nulo, se usa canal por defecto. */
-        String canalNotificacion,
+        /** Notification channel to use (e.g: EMAIL, SMS, PUSH). Optional: if null, uses default channel. */
+        String notificationChannel,
 
-        /** Destinatario de la notificación (ej: email del médico, número de teléfono). Opcional: si nulo, se resuelve desde configuración. */
-        String destinatario
+        /** Notification recipient (e.g: doctor's email, phone number). Optional: if null, resolved from configuration. */
+        String recipient
 
 ) {
 
     /**
-     * Constructor compacto con validaciones defensivas.
-     * Garantiza integridad de los datos antes de entrar al dominio.
+     * Constructor compact with defensive validations.
+     * Guarantees data integrity before entering the domain.
      */
     public NotifyLabReadyCommand {
-        Objects.requireNonNull(labId, "labId no puede ser nulo");
+        Objects.requireNonNull(labId, "labId cannot be null");
         if (labId.isBlank()) {
-            throw new IllegalArgumentException("labId no puede estar vacío");
+            throw new IllegalArgumentException("labId cannot be blank");
         }
-        Objects.requireNonNull(patientId, "patientId no puede ser nulo");
-        // canalNotificacion y destinatario pueden ser null (se resuelven en el adaptador de salida)
-        if (destinatario != null && destinatario.isBlank()) {
-            throw new IllegalArgumentException("destinatario no puede estar vacío si se proporciona");
+        Objects.requireNonNull(patientId, "patientId cannot be null");
+        // notificationChannel and recipient can be null (resolved in the output adapter)
+        if (recipient != null && recipient.isBlank()) {
+            throw new IllegalArgumentException("recipient cannot be blank if provided");
         }
     }
 }

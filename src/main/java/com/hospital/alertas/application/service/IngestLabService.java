@@ -12,36 +12,36 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Orquestador del caso de uso de ingesta de laboratorios clínicos.
+ * Orchestrator for the clinical laboratory ingestion use case.
  *
- * <p>Implementa la lógica de negocio secuencial y síncrona:
+ * <p>Implements sequential synchronous business logic:
  * <ol>
- *   <li>Validación defensiva de campos mandatorios.</li>
- *   <li>Evaluación automática de umbrales de alerta crítica.</li>
- *   <li>Persistencia del resultado procesado.</li>
+ *   <li>Defensive validation of mandatory fields.</li>
+ *   <li>Automatic critical alert threshold evaluation.</li>
+ *   <li>Persistence of processed result.</li>
  * </ol>
  *
- * <p>La concurrencia se gestiona externamente por Project Loom (hilos virtuales)
- * en la capa de infraestructura. Este servicio es 100% imperativo y bloqueante.
+ * <p>Concurrency is managed externally by Project Loom (virtual threads)
+ * in the infrastructure layer. This service is 100% imperative and blocking.
  *
- * <p><strong>Restricción arquitectónica:</strong> prohibido importar
- * {@code software.amazon.awssdk.*} o usar APIs reactivas (Mutiny, Uni, Multi).
+ * <p><strong>Architectural constraint:</strong> forbidden to import
+ * {@code software.amazon.awssdk.*} or use reactive APIs (Mutiny, Uni, Multi).
  */
 @ApplicationScoped
 public class IngestLabService implements IngestLabUseCase {
 
     /**
-     * Patrón para extraer la parte numérica (incluyendo decimales y signo negativo)
-     * al inicio de un valor analítico. Ejemplo: "14.5 g/dL" → 14.5
+     * Pattern to extract the numeric part (including decimal and negative sign)
+     * at the beginning of an analytical value. Example: "14.5 g/dL" → 14.5
      */
     private static final Pattern NUMERIC_PREFIX = Pattern.compile("^(-?\\d+(?:\\.\\d+)?)");
 
     /**
-     * Umbrales de alerta crítica clínica.
-     * Cada entrada define: nombre del analito (lowercase), límite inferior, límite superior.
-     * Si el valor está FUERA del rango [min, max], se activa la alerta crítica.
+     * Critical thresholds for clinical analytes.
+     * Each entry defines: analyte name (lowercase), minimum threshold, maximum threshold.
+     * If the value is OUTSIDE the range [min, max], the critical alert is activated.
      *
-     * <p>Referencia clínica: valores de pánico estándar de laboratorio hospitalario.
+     * <p>Clinical reference: standard panic values from hospital laboratory.
      */
     private static final Map<String, CriticalThreshold> CRITICAL_THRESHOLDS = Map.of(
             "hemoglobina",  new CriticalThreshold(7.0,   20.0),
@@ -55,13 +55,13 @@ public class IngestLabService implements IngestLabUseCase {
     private final LabPersistencePort persistencePort;
 
     /**
-     * Constructor para inyección CDI estándar.
+     * Constructor for standard CDI injection.
      *
-     * @param persistencePort puerto de persistencia (inyectado por Quarkus/CDI)
+     * @param persistencePort persistence port (injected by Quarkus/CDI)
      */
     public IngestLabService(LabPersistencePort persistencePort) {
         this.persistencePort = Objects.requireNonNull(persistencePort,
-                "LabPersistencePort no puede ser nulo");
+                "LabPersistencePort cannot be null");
     }
 
     @Override
@@ -73,64 +73,64 @@ public class IngestLabService implements IngestLabUseCase {
         persistencePort.saveLab(labToSave);
     }
 
-    // ─── Validación de campos mandatorios ───────────────────────────────
+    // ─── Mandatory field validation ───────────────────────────────
 
     /**
-     * Valida que los campos clínicos mandatorios del LabResult no sean nulos ni vacíos.
-     * Las validaciones del Record compact constructor ya cubren los nulls en construcción,
-     * pero esta capa adicional protege contra datos corruptos provenientes de adaptadores
-     * de entrada que podrían deserializar JSON malformado.
+     * Validates that mandatory clinical fields of LabResult are not null or empty.
+     * Record compact constructor validations already cover nulls on construction,
+     * but this additional layer protects against corrupt data from input adapters
+     * that could deserialize malformed JSON.
      *
-     * @throws LabValidationException si algún campo mandatorio es inválido
+     * @throws LabValidationException if any mandatory field is invalid
      */
     private void validateMandatoryFields(LabResult lab) {
         if (lab == null) {
-            throw new LabValidationException("El resultado de laboratorio no puede ser nulo");
+            throw new LabValidationException("Lab result cannot be null");
         }
         if (lab.patientId() == null) {
-            throw new LabValidationException("patientId", "es obligatorio para la ingesta");
+            throw new LabValidationException("patientId", "is required for ingestion");
         }
-        if (lab.tipoExamen() == null || lab.tipoExamen().isBlank()) {
-            throw new LabValidationException("tipoExamen", "es obligatorio y no puede estar vacío");
+        if (lab.testType() == null || lab.testType().isBlank()) {
+            throw new LabValidationException("testType", "is required and cannot be blank");
         }
-        if (lab.valoresAnaliticos() == null || lab.valoresAnaliticos().isEmpty()) {
-            throw new LabValidationException("valoresAnaliticos",
-                    "debe contener al menos un resultado analítico");
+        if (lab.analyticValues() == null || lab.analyticValues().isEmpty()) {
+            throw new LabValidationException("analyticValues",
+                    "must contain at least one analytical result");
         }
         if (lab.timestamp() == null) {
-            throw new LabValidationException("timestamp", "es obligatorio para trazabilidad clínica");
+            throw new LabValidationException("timestamp", "is required for clinical traceability");
         }
-        if (lab.s3PathCompleto() == null || lab.s3PathCompleto().isBlank()) {
-            throw new LabValidationException("s3PathCompleto",
-                    "es obligatorio: el PDF original debe estar almacenado en S3");
+        if (lab.s3Path() == null || lab.s3Path().isBlank()) {
+            throw new LabValidationException("s3Path",
+                    "is required: original PDF must be stored in S3");
         }
     }
 
-    // ─── Evaluación de umbrales de alerta crítica ───────────────────────
+    // ─── Critical alert threshold evaluation ───────────────────────
 
     /**
-     * Evalúa los valores analíticos contra los umbrales de peligro clínico.
-     * Si CUALQUIER analito excede su umbral, retorna una nueva instancia
-     * con {@code alertaCritica = true}. Si ninguno excede, retorna el lab original.
+     * Evaluates analytical values against clinical danger thresholds.
+     * If ANY analyte exceeds its threshold, returns a new instance
+     * with {@code criticalAlert = true}. If none exceed, returns the original lab.
      *
-     * <p>La comparación de nombres de analitos es case-insensitive para tolerar
-     * variaciones en la salida de diferentes equipos de laboratorio.
+     * <p>Analyte name comparison is case-insensitive to tolerate
+     * variations in output from different laboratory equipment.
      *
-     * @param lab resultado de laboratorio a evaluar
-     * @return lab original o nueva instancia con alerta crítica activada
+     * @param lab laboratory result to evaluate
+     * @return original lab or new instance with critical alert activated
      */
     LabResult evaluateCriticalAlerts(LabResult lab) {
-        // Si ya viene marcado como alerta crítica, respetar la decisión upstream
-        if (lab.alertaCritica()) {
+        // If already marked as critical alert, respect upstream decision
+        if (lab.criticalAlert()) {
             return lab;
         }
 
-        for (var entry : lab.valoresAnaliticos().entrySet()) {
+        for (var entry : lab.analyticValues().entrySet()) {
             String analyteKey = entry.getKey().toLowerCase().trim();
             CriticalThreshold threshold = CRITICAL_THRESHOLDS.get(analyteKey);
 
             if (threshold == null) {
-                continue; // Analito sin umbral definido, no es evaluable
+                continue; // Analyte without defined threshold, not evaluable
             }
 
             double numericValue = extractNumericValue(entry.getKey(), entry.getValue());
@@ -144,46 +144,46 @@ public class IngestLabService implements IngestLabUseCase {
     }
 
     /**
-     * Extrae el valor numérico del inicio de una cadena de valor analítico.
-     * Ejemplo: "14.5 g/dL" → 14.5, "120 mg/dL" → 120.0
+     * Extracts numeric value from the start of an analytical value string.
+     * Example: "14.5 g/dL" → 14.5, "120 mg/dL" → 120.0
      *
-     * @param analyteName nombre del analito (para mensajes de error)
-     * @param rawValue    valor crudo del analito con posible unidad
-     * @return valor numérico extraído
-     * @throws LabValidationException si el valor no contiene un número válido
+     * @param analyteName name of analyte (for error messages)
+     * @param rawValue    raw analyte value with possible unit
+     * @return extracted numeric value
+     * @throws LabValidationException if value doesn't contain a valid number
      */
     private double extractNumericValue(String analyteName, String rawValue) {
         if (rawValue == null || rawValue.isBlank()) {
             throw new LabValidationException(analyteName,
-                    "el valor analítico no puede estar vacío");
+                    "analytical value cannot be blank");
         }
 
         Matcher matcher = NUMERIC_PREFIX.matcher(rawValue.trim());
         if (!matcher.find()) {
             throw new LabValidationException(analyteName,
-                    "no se pudo extraer un valor numérico de: '%s'".formatted(rawValue));
+                    "could not extract numeric value from: '%s'".formatted(rawValue));
         }
 
         try {
             return Double.parseDouble(matcher.group(1));
         } catch (NumberFormatException e) {
             throw new LabValidationException(
-                    "Error parseando valor numérico del analito '%s': %s"
+                    "Error parsing numeric value for analyte '%s': %s"
                             .formatted(analyteName, rawValue), e);
         }
     }
 
-    // ─── Record interno para umbrales ───────────────────────────────────
+    // ─── Internal record for thresholds ───────────────────────────────────
 
     /**
-     * Umbral de alerta crítica para un analito clínico.
-     * Valores FUERA del rango [min, max] disparan alerta crítica.
+     * Critical alert threshold for a clinical analyte.
+     * Values OUTSIDE the range [min, max] trigger critical alert.
      */
     record CriticalThreshold(double min, double max) {
         CriticalThreshold {
             if (min > max) {
                 throw new IllegalArgumentException(
-                        "min (%s) no puede ser mayor que max (%s)".formatted(min, max));
+                        "min (%s) cannot be greater than max (%s)".formatted(min, max));
             }
         }
     }

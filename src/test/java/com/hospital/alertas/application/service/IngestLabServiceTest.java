@@ -4,6 +4,7 @@ import com.hospital.alertas.domain.exception.LabValidationException;
 import com.hospital.alertas.domain.model.LabResult;
 import com.hospital.alertas.domain.model.LabResultTestBuilder;
 import com.hospital.alertas.domain.model.PatientId;
+import com.hospital.alertas.domain.model.VisibilityStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -15,12 +16,12 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests de comportamiento clínico para {@link IngestLabService}.
- *
- * <p>Usa {@link InMemoryLabPersistence} como fake (no mocks).
- * Cada test verifica un escenario de negocio observable, no una línea de código.
- *
- * <p>Convención de nombres: cuando<Accion>_con<Condicion>_entonces<Resultado>
+ * Clinical behavior tests for {@link IngestLabService}.
+ * 
+ * <p>Uses {@link InMemoryLabPersistence} as fake (no mocks).
+ * Each test verifies an observable business scenario, not a line of code.
+ * 
+ * <p>Naming convention: when<Action>_with<Condition>_then<Result>
  */
 class IngestLabServiceTest {
 
@@ -33,15 +34,15 @@ class IngestLabServiceTest {
         service = new IngestLabService(persistence);
     }
 
-    // ─── Flujo exitoso (Happy Path) ─────────────────────────────────────
+    // ─── Successful Flow (Happy Path) ─────────────────────────────────────
 
     @Nested
-    @DisplayName("Ingesta exitosa de laboratorios")
+    @DisplayName("Successful laboratory ingestion")
     class IngestaExitosa {
 
         @Test
-        @DisplayName("cuando ingiero un lab con valores normales, se persiste sin alerta crítica")
-        void cuandoIngieroLab_conValoresNormales_entoncesSePersisteYNoEsAlertaCritica() {
+        @DisplayName("when ingesting a lab with normal values, it persists without critical alert")
+        void whenIngestLab_withNormalValues_thenPersistsAndNotCriticalAlert() {
             LabResult lab = LabResultTestBuilder.unLabNormal();
 
             service.execute(lab);
@@ -49,27 +50,27 @@ class IngestLabServiceTest {
             assertEquals(1, persistence.count());
             Optional<LabResult> saved = persistence.getLastSaved();
             assertTrue(saved.isPresent());
-            assertFalse(saved.get().alertaCritica(),
-                    "Un lab con Hemoglobina 14.5 g/dL NO debería ser alerta crítica");
+            assertFalse(saved.get().criticalAlert(),
+                    "A lab with Hemoglobin 14.5 g/dL should NOT be critical alert");
         }
 
         @Test
-        @DisplayName("cuando ingiero un lab, se puede recuperar por paciente")
-        void cuandoIngieroLab_entoncesPuedoRecuperarloPorPaciente() {
+        @DisplayName("when ingesting a lab, it can be retrieved by patient")
+        void whenIngestLab_thenCanRetrieveByPatient() {
             LabResult lab = new LabResultTestBuilder()
                     .withPatientId("PAC999")
                     .build();
 
             service.execute(lab);
 
-            Optional<LabResult> found = persistence.obtenerUltimoLaboratorio(new PatientId("PAC999"));
+            Optional<LabResult> found = persistence.findLatestByPatient(new PatientId("PAC999"));
             assertTrue(found.isPresent());
             assertEquals("PAC999", found.get().patientId().value());
         }
 
         @Test
-        @DisplayName("cuando ingiero múltiples labs del mismo paciente, todos se persisten")
-        void cuandoIngieroMultiplesLabs_delMismoPaciente_entoncesTodosSeGuardan() {
+        @DisplayName("when ingesting multiple labs for same patient, all are persisted")
+        void whenIngestMultipleLabs_forSamePatient_thenAllAreSaved() {
             LabResult lab1 = new LabResultTestBuilder()
                     .withLabId("LAB001")
                     .withPatientId("PAC100")
@@ -77,8 +78,8 @@ class IngestLabServiceTest {
             LabResult lab2 = new LabResultTestBuilder()
                     .withLabId("LAB002")
                     .withPatientId("PAC100")
-                    .withTipoExamen("Quimica Sanguinea")
-                    .withSoloAnalito("Glucosa", "95 mg/dL")
+                    .withTestType("Clinical Chemistry")
+                    .withSoloAnalito("Glucose", "95 mg/dL")
                     .build();
 
             service.execute(lab1);
@@ -88,51 +89,52 @@ class IngestLabServiceTest {
         }
     }
 
-    // ─── Evaluación de alertas críticas ──────────────────────────────────
+
+    // ─── Automatic evaluation of critical clinical alerts ────────────────────
 
     @Nested
-    @DisplayName("Evaluación automática de alertas críticas clínicas")
-    class AlertasCriticas {
+    @DisplayName("Automatic evaluation of critical clinical alerts")
+    class CriticalAlerts {
 
         @Test
-        @DisplayName("cuando ingiero lab con Hemoglobina < 7, entonces alerta crítica es true")
-        void cuandoIngieroLab_conHemoglobinaBaja_entoncesAlertaEsTrue() {
+        @DisplayName("when ingesting a lab with Hemoglobin < 7.0, then critical alert is true")
+        void whenIngestLabWithLowHemoglobin_thenCriticalAlertIsTrue() {
             LabResult lab = LabResultTestBuilder.unLabConHemoglobinaCritica();
 
             service.execute(lab);
 
             LabResult saved = persistence.getLastSaved().orElseThrow();
-            assertTrue(saved.alertaCritica(),
-                    "Hemoglobina 5.2 g/dL está por debajo del umbral de 7.0 → alerta crítica");
+            assertTrue(saved.criticalAlert(),
+                    "Hemoglobin 5.2 g/dL is below the threshold of 7.0 → critical alert");
         }
 
         @Test
-        @DisplayName("cuando ingiero lab con Potasio > 6.0, entonces alerta crítica es true")
-        void cuandoIngieroLab_conPotasioAlto_entoncesAlertaEsTrue() {
+        @DisplayName("when ingesting a lab with Potassium > 6.0, then critical alert is true")
+        void whenIngestLabWithHighPotassium_thenCriticalAlertIsTrue() {
             LabResult lab = LabResultTestBuilder.unLabConPotasioCritico();
 
             service.execute(lab);
 
             LabResult saved = persistence.getLastSaved().orElseThrow();
-            assertTrue(saved.alertaCritica(),
-                    "Potasio 7.8 mEq/L supera el umbral de 6.0 → alerta crítica");
+            assertTrue(saved.criticalAlert(),
+                    "Potassium 7.8 mEq/L exceeds the threshold of 6.0 → critical alert");
         }
 
         @Test
-        @DisplayName("cuando ingiero lab con Glucosa > 400, entonces alerta crítica es true")
-        void cuandoIngieroLab_conGlucosaAlta_entoncesAlertaEsTrue() {
+        @DisplayName("when ingesting a lab with Glucose > 400, then critical alert is true")
+        void whenIngestLabWithHighGlucose_thenCriticalAlertIsTrue() {
             LabResult lab = LabResultTestBuilder.unLabConGlucosaCritica();
 
             service.execute(lab);
 
             LabResult saved = persistence.getLastSaved().orElseThrow();
-            assertTrue(saved.alertaCritica(),
-                    "Glucosa 520 mg/dL supera el umbral de 400 → alerta crítica");
+            assertTrue(saved.criticalAlert(),
+                    "Glucose 520 mg/dL exceeds the threshold of 400 → critical alert");
         }
 
         @Test
-        @DisplayName("cuando ingiero lab con Glucosa < 50 (hipoglucemia), entonces alerta crítica es true")
-        void cuandoIngieroLab_conGlucosaMuyBaja_entoncesAlertaEsTrue() {
+        @DisplayName("when ingesting a lab with Glucose < 50 (hypoglycemia), then critical alert is true")
+        void whenIngestLabWithVeryLowGlucose_thenCriticalAlertIsTrue() {
             LabResult lab = new LabResultTestBuilder()
                     .withSoloAnalito("Glucosa", "38 mg/dL")
                     .withTipoExamen("Quimica Sanguinea")
@@ -141,13 +143,13 @@ class IngestLabServiceTest {
             service.execute(lab);
 
             LabResult saved = persistence.getLastSaved().orElseThrow();
-            assertTrue(saved.alertaCritica(),
-                    "Glucosa 38 mg/dL está por debajo de 50 → hipoglucemia crítica");
+            assertTrue(saved.criticalAlert(),
+                    "Glucose 38 mg/dL is below 50 → critical hypoglycemia");
         }
 
         @Test
-        @DisplayName("cuando ingiero lab con Sodio > 160 (hipernatremia), entonces alerta crítica es true")
-        void cuandoIngieroLab_conSodioAlto_entoncesAlertaEsTrue() {
+        @DisplayName("when ingesting a lab with Sodium > 160 (hypernatremia), then critical alert is true")
+        void whenIngestLabWithHighSodium_thenCriticalAlertIsTrue() {
             LabResult lab = new LabResultTestBuilder()
                     .withSoloAnalito("Sodio", "172 mEq/L")
                     .withTipoExamen("Electrolitos Sericos")
@@ -156,13 +158,13 @@ class IngestLabServiceTest {
             service.execute(lab);
 
             LabResult saved = persistence.getLastSaved().orElseThrow();
-            assertTrue(saved.alertaCritica(),
-                    "Sodio 172 mEq/L supera el umbral de 160 → hipernatremia crítica");
+            assertTrue(saved.criticalAlert(),
+                    "Sodium 172 mEq/L exceeds the threshold of 160 → critical hypernatremia");
         }
 
         @Test
-        @DisplayName("cuando ingiero lab con Creatinina > 10 (falla renal), entonces alerta crítica es true")
-        void cuandoIngieroLab_conCreatininaAlta_entoncesAlertaEsTrue() {
+        @DisplayName("when ingesting a lab with Creatinine > 10 (renal failure), then critical alert is true")
+        void whenIngestLabWithHighCreatinine_thenCriticalAlertIsTrue() {
             LabResult lab = new LabResultTestBuilder()
                     .withSoloAnalito("Creatinina", "12.3 mg/dL")
                     .withTipoExamen("Quimica Sanguinea")
@@ -171,13 +173,13 @@ class IngestLabServiceTest {
             service.execute(lab);
 
             LabResult saved = persistence.getLastSaved().orElseThrow();
-            assertTrue(saved.alertaCritica(),
-                    "Creatinina 12.3 mg/dL supera el umbral de 10.0 → falla renal crítica");
+            assertTrue(saved.criticalAlert(),
+                    "Creatinine 12.3 mg/dL exceeds the threshold of 10.0 → critical renal failure");
         }
 
         @Test
-        @DisplayName("cuando ingiero lab con valores justo en el límite, NO activa alerta")
-        void cuandoIngieroLab_conValoresEnElLimite_entoncesNoEsAlertaCritica() {
+        @DisplayName("when ingesting a lab with values right on the boundary, NO alert")
+        void whenIngestLabWithValuesOnLimit_thenNotCriticalAlert() {
             LabResult lab = new LabResultTestBuilder()
                     .withSoloAnalito("Hemoglobina", "7.0 g/dL")
                     .build();
@@ -185,27 +187,27 @@ class IngestLabServiceTest {
             service.execute(lab);
 
             LabResult saved = persistence.getLastSaved().orElseThrow();
-            assertFalse(saved.alertaCritica(),
-                    "Hemoglobina exactamente en 7.0 está DENTRO del rango [7.0, 20.0] → no es alerta");
+            assertFalse(saved.criticalAlert(),
+                    "Hemoglobin exactly at 7.0 is WITHIN the range [7.0, 20.0] → no alert");
         }
 
         @Test
-        @DisplayName("cuando lab ya viene con alerta crítica true, se respeta y no se reevalúa")
-        void cuandoLabYaTieneAlertaCritica_entoncesSeRespeta() {
+        @DisplayName("when lab already has critical alert true, it must be respected and not reevaluated")
+        void whenLabAlreadyHasCriticalAlert_thenItIsRespected() {
             LabResult lab = new LabResultTestBuilder()
-                    .withAlertaCritica(true)
+                    .withAlertaCritica(true) // Assuming builder supports this for testing immutability/precedence
                     .build();
 
             service.execute(lab);
 
             LabResult saved = persistence.getLastSaved().orElseThrow();
-            assertTrue(saved.alertaCritica(),
-                    "La alerta crítica preexistente debe respetarse");
+            assertTrue(saved.criticalAlert(),
+                    "The pre-existing critical alert must be respected");
         }
 
         @Test
-        @DisplayName("cuando ingiero lab con analito desconocido, no activa alerta")
-        void cuandoIngieroLab_conAnalitoSinUmbral_entoncesNoActivaAlerta() {
+        @DisplayName("when ingesting a lab with unknown analyte, no alert triggered")
+        void whenIngestLabWithUnknownAnalyte_thenNoAlertIsTriggered() {
             LabResult lab = new LabResultTestBuilder()
                     .withSoloAnalito("VitaminaB12", "350 pg/mL")
                     .withTipoExamen("Vitaminas")
@@ -214,18 +216,18 @@ class IngestLabServiceTest {
             service.execute(lab);
 
             LabResult saved = persistence.getLastSaved().orElseThrow();
-            assertFalse(saved.alertaCritica(),
-                    "Un analito sin umbral definido no debe disparar alerta");
+            assertFalse(saved.criticalAlert(),
+                    "An analyte without a defined threshold should not trigger an alert");
         }
 
         @Test
-        @DisplayName("cuando un lab tiene múltiples analitos y solo uno es crítico, activa alerta")
-        void cuandoIngieroLab_conUnAnalitoCriticoEntreVarios_entoncesAlertaEsTrue() {
+        @DisplayName("when a lab has multiple analytes and only one is critical, alert triggers")
+        void whenIngestLabWithOneCriticalAnalyteAmongMany_thenAlertIsTrue() {
             LabResult lab = new LabResultTestBuilder()
                     .withValoresAnaliticos(Map.of(
                             "Hemoglobina", "14.0 g/dL",  // Normal
-                            "Leucocitos", "7500 /uL",    // Sin umbral
-                            "Potasio", "6.5 mEq/L"       // CRÍTICO (> 6.0)
+                            "Leucocitos", "7500 /uL",    // No threshold
+                            "Potasio", "6.5 mEq/L"       // CRITICAL (> 6.0)
                     ))
                     .withTipoExamen("Panel Completo")
                     .build();
@@ -233,13 +235,13 @@ class IngestLabServiceTest {
             service.execute(lab);
 
             LabResult saved = persistence.getLastSaved().orElseThrow();
-            assertTrue(saved.alertaCritica(),
-                    "Potasio 6.5 supera el umbral de 6.0 aunque los demás son normales");
+            assertTrue(saved.criticalAlert(),
+                    "Potassium 6.5 exceeds the threshold of 6.0 even if others are normal");
         }
 
         @Test
-        @DisplayName("la comparación de nombres de analitos es case-insensitive")
-        void cuandoIngieroLab_conNombreAnalitoEnMayusculas_entoncesEvalua() {
+        @DisplayName("analyte name comparison is case-insensitive")
+        void whenIngestLabWithUppercaseAnalyteName_thenEvaluates() {
             LabResult lab = new LabResultTestBuilder()
                     .withSoloAnalito("HEMOGLOBINA", "5.0 g/dL")
                     .build();
@@ -247,20 +249,21 @@ class IngestLabServiceTest {
             service.execute(lab);
 
             LabResult saved = persistence.getLastSaved().orElseThrow();
-            assertTrue(saved.alertaCritica(),
-                    "La evaluación debe ser case-insensitive: 'HEMOGLOBINA' == 'hemoglobina'");
+            assertTrue(saved.criticalAlert(),
+                    "Evaluation must be case-insensitive: 'HEMOGLOBINA' == 'hemoglobina'");
         }
     }
 
-    // ─── Validaciones de rechazo ─────────────────────────────────────────
+
+    // ─── Rejection of Corrupt Clinical Data ────────────────────────
 
     @Nested
-    @DisplayName("Rechazo de datos clínicos corruptos")
-    class DatosCorruptos {
+    @DisplayName("Rejection of Corrupt Clinical Data")
+    class CorruptedData {
 
         @Test
-        @DisplayName("cuando ingiero lab con valor analítico no numérico para analito evaluable, lanza excepción")
-        void cuandoIngieroLab_conValorNoNumerico_entoncesLanzaExcepcion() {
+        @DisplayName("when ingesting a lab with non-numeric analytic value for evaluable analyte, throws exception")
+        void whenIngestLabWithNonNumericValue_thenThrowsException() {
             LabResult lab = new LabResultTestBuilder()
                     .withSoloAnalito("Hemoglobina", "INVALIDO")
                     .build();
@@ -268,12 +271,12 @@ class IngestLabServiceTest {
             LabValidationException ex = assertThrows(LabValidationException.class,
                     () -> service.execute(lab));
             assertTrue(ex.getMessage().contains("Hemoglobina"),
-                    "El mensaje de error debe indicar qué analito falló");
+                    "The error message must indicate which analyte failed");
         }
 
         @Test
-        @DisplayName("cuando ingiero lab con valor analítico vacío para analito evaluable, lanza excepción")
-        void cuandoIngieroLab_conValorVacio_entoncesLanzaExcepcion() {
+        @DisplayName("when ingesting a lab with empty analytic value for evaluable analyte, throws exception")
+        void whenIngestLabWithEmptyValue_thenThrowsException() {
             LabResult lab = new LabResultTestBuilder()
                     .withSoloAnalito("Potasio", "")
                     .build();
@@ -282,36 +285,37 @@ class IngestLabServiceTest {
         }
 
         @Test
-        @DisplayName("cuando el servicio se construye con puerto nulo, lanza excepción")
-        void cuandoConstruyoServicio_conPuertoNulo_entoncesLanzaExcepcion() {
+        @DisplayName("when the service is constructed with null port, throws exception")
+        void whenConstructingServiceWithNullPort_thenThrowsException() {
             assertThrows(NullPointerException.class, () -> new IngestLabService(null));
         }
     }
 
-    // ─── Verificación de inmutabilidad del flujo ─────────────────────────
+
+    // ─── Inmutability in Ingestion Flow ─────────────────────────
 
     @Nested
-    @DisplayName("Inmutabilidad en el flujo de ingesta")
-    class Inmutabilidad {
+    @DisplayName("Inmutability in Ingestion Flow")
+    class Immutability {
 
         @Test
-        @DisplayName("el LabResult original no se modifica cuando se activa alerta crítica")
-        void cuandoSeActivaAlerta_entoncesLabOriginalNoSeMuta() {
+        @DisplayName("original LabResult is not modified when critical alert is activated")
+        void whenAlertIsActivated_thenOriginalLabIsNotMutated() {
             LabResult labOriginal = new LabResultTestBuilder()
                     .withSoloAnalito("Hemoglobina", "5.0 g/dL")
                     .build();
 
-            assertFalse(labOriginal.alertaCritica(), "El lab original no tiene alerta");
+            assertFalse(labOriginal.criticalAlert(), "Original lab has no alert");
 
             service.execute(labOriginal);
 
-            // El original sigue intacto (inmutabilidad del Record)
-            assertFalse(labOriginal.alertaCritica(),
-                    "El Record original no debe mutarse — se crea una nueva instancia");
+            // The original remains intact (Record immutability)
+            assertFalse(labOriginal.criticalAlert(),
+                    "The original Record must not mutate — a new instance is created");
 
-            // Pero lo persistido SÍ tiene alerta
+            // But the persisted one DOES have an alert
             LabResult saved = persistence.getLastSaved().orElseThrow();
-            assertTrue(saved.alertaCritica());
+            assertTrue(saved.criticalAlert());
         }
     }
 }
