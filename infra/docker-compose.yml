@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # LocalStack provee emulación de AWS DynamoDB y S3 localmente para desarrollo/pruebas
   localstack:
-    image: localstack/localstack:latest
+    image: localstack/localstack:3.4.0
     container_name: hc-alertas-localstack
     ports:
       - "4566:4566"            # LocalStack Edge Port (sirve todos los servicios)

@@ -11,6 +11,7 @@ import com.hospital.alertas.domain.model.PatientId;
 import com.hospital.alertas.domain.model.PatientTimeline;
 import com.hospital.alertas.domain.model.SentNotification;
 import com.hospital.alertas.domain.model.VisibilityStatus;
+import com.hospital.alertas.infrastructure.config.CloudWatchEmfMetrics;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -82,19 +83,23 @@ public class DynamoDbPersistenceAdapter implements LabPersistencePort {
 
     private final DynamoDbClient dynamoDbClient;
     private final String tableName;
+    private final CloudWatchEmfMetrics metrics;
 
     /**
      * Constructor for CDI injection.
      *
      * @param dynamoDbClient synchronous DynamoDB client (injected by Quarkus Amazon Services)
      * @param tableName      name of the DynamoDB table (configurable via application.properties)
+     * @param metrics        CloudWatch EMF metrics
      */
     public DynamoDbPersistenceAdapter(
             DynamoDbClient dynamoDbClient,
-            @ConfigProperty(name = "app.dynamodb.table-name", defaultValue = "hc-alertas") String tableName
+            @ConfigProperty(name = "app.dynamodb.table-name", defaultValue = "hc-alertas") String tableName,
+            CloudWatchEmfMetrics metrics
     ) {
         this.dynamoDbClient = Objects.requireNonNull(dynamoDbClient, "DynamoDbClient cannot be null");
         this.tableName = Objects.requireNonNull(tableName, "tableName cannot be null");
+        this.metrics = Objects.requireNonNull(metrics, "CloudWatchEmfMetrics cannot be null");
     }
 
     // ─── saveLab ────────────────────────────────────────────────────────
@@ -200,6 +205,7 @@ public class DynamoDbPersistenceAdapter implements LabPersistencePort {
         } catch (ConditionalCheckFailedException e) {
             LOGGER.log(Level.WARNING, "OCC conflict when saving lab {0} (expected version: {1})",
                     new Object[]{lab.labId(), lab.version()});
+            metrics.logOccConflict();
             throw new OptimisticLockException(
                     lab.labId(),
                     lab.version(),
@@ -453,6 +459,7 @@ public class DynamoDbPersistenceAdapter implements LabPersistencePort {
         } catch (ConditionalCheckFailedException e) {
             LOGGER.log(Level.WARNING, "OCC conflict when updating visibility status lab {0} (expected version: {1})",
                     new Object[]{labId, expectedVersion});
+            metrics.logOccConflict();
             throw new OptimisticLockException(
                     labId,
                     expectedVersion,

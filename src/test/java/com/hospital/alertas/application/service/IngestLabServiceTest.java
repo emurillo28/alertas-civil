@@ -5,6 +5,7 @@ import com.hospital.alertas.domain.model.LabResult;
 import com.hospital.alertas.domain.model.LabResultTestBuilder;
 import com.hospital.alertas.domain.model.PatientId;
 import com.hospital.alertas.domain.model.VisibilityStatus;
+import com.hospital.alertas.infrastructure.config.CloudWatchEmfMetrics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -17,21 +18,23 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Clinical behavior tests for {@link IngestLabService}.
- * 
+ *
  * <p>Uses {@link InMemoryLabPersistence} as fake (no mocks).
  * Each test verifies an observable business scenario, not a line of code.
- * 
+ *
  * <p>Naming convention: when<Action>_with<Condition>_then<Result>
  */
 class IngestLabServiceTest {
 
     private InMemoryLabPersistence persistence;
     private IngestLabService service;
+    private CloudWatchEmfMetrics metrics;
 
     @BeforeEach
     void setUp() {
         persistence = new InMemoryLabPersistence();
-        service = new IngestLabService(persistence);
+        metrics = new CloudWatchEmfMetrics("test", "test");
+        service = new IngestLabService(persistence, metrics);
     }
 
     // ─── Successful Flow (Happy Path) ─────────────────────────────────────
@@ -287,7 +290,8 @@ class IngestLabServiceTest {
         @Test
         @DisplayName("when the service is constructed with null port, throws exception")
         void whenConstructingServiceWithNullPort_thenThrowsException() {
-            assertThrows(NullPointerException.class, () -> new IngestLabService(null));
+            CloudWatchEmfMetrics testMetrics = new CloudWatchEmfMetrics("test", "test");
+            assertThrows(NullPointerException.class, () -> new IngestLabService(null, testMetrics));
         }
     }
 

@@ -1,45 +1,43 @@
 package com.hospital.alertas.application.service;
 
-import com.hospital.alertas.domain.model.PatientId;
+import com.hospital.alertas.domain.model.NotificationChannel;
+
 import java.util.Objects;
 
 /**
- * Input command for the notify-lab-ready use case.
- * <p>
- * Encapsulates the minimum necessary data to trigger the notification of a
- * laboratory result to the corresponding channel (email, SMS, push, etc.).
+ * Command to trigger the notification flow for a laboratory result.
  *
- * <p>Immutable by design (Java Record). Defensive validation in compact constructor.
+ * <p>This is a mutable command object (not a domain record) because it carries
+ * transient input from the UI/integration layer before being converted into
+ * domain objects.
  */
-public record NotifyLabReadyCommand(
+public class NotifyLabReadyCommand {
 
-        /** Unique laboratory result identifier (not null, not blank). */
-        String labId,
+    private final String labId;
+    private final String patientId;
+    private final String recipient;
+    private final NotificationChannel channel;
 
-        /** Owner patient identifier (not null). */
-        PatientId patientId,
+    public NotifyLabReadyCommand(String labId, String patientId, String recipient, NotificationChannel channel) {
+        this.labId = labId;
+        this.patientId = patientId;
+        this.recipient = recipient;
+        this.channel = channel;
+    }
 
-        /** Notification channel to use (e.g: EMAIL, SMS, PUSH). Optional: if null, uses default channel. */
-        String notificationChannel,
+    public String labId() {
+        return labId;
+    }
 
-        /** Notification recipient (e.g: doctor's email, phone number). Optional: if null, resolved from configuration. */
-        String recipient
+    public String patientId() {
+        return patientId;
+    }
 
-) {
+    public String recipient() {
+        return recipient;
+    }
 
-    /**
-     * Constructor compact with defensive validations.
-     * Guarantees data integrity before entering the domain.
-     */
-    public NotifyLabReadyCommand {
-        Objects.requireNonNull(labId, "labId cannot be null");
-        if (labId.isBlank()) {
-            throw new IllegalArgumentException("labId cannot be blank");
-        }
-        Objects.requireNonNull(patientId, "patientId cannot be null");
-        // notificationChannel and recipient can be null (resolved in the output adapter)
-        if (recipient != null && recipient.isBlank()) {
-            throw new IllegalArgumentException("recipient cannot be blank if provided");
-        }
+    public NotificationChannel channel() {
+        return channel;
     }
 }

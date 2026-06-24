@@ -4,6 +4,7 @@ import com.hospital.alertas.application.ports.inbound.IngestLabUseCase;
 import com.hospital.alertas.application.ports.outbound.LabPersistencePort;
 import com.hospital.alertas.domain.exception.LabValidationException;
 import com.hospital.alertas.domain.model.LabResult;
+import com.hospital.alertas.infrastructure.config.CloudWatchEmfMetrics;
 import jakarta.enterprise.context.ApplicationScoped;
 
 import java.util.Map;
@@ -30,14 +31,11 @@ import java.util.regex.Pattern;
 @ApplicationScoped
 public class IngestLabService implements IngestLabUseCase {
 
-    /**
-     * Pattern to extract the numeric part (including decimal and negative sign)
-     * at the beginning of an analytical value. Example: "14.5 g/dL" → 14.5
-     */
+    /** Pattern to extract the numeric part (including decimal and negative sign)
+     * at the beginning of an analytical value. Example: "14.5 g/dL" → 14.5 */
     private static final Pattern NUMERIC_PREFIX = Pattern.compile("^(-?\\d+(?:\\.\\d+)?)");
 
-    /**
-     * Critical thresholds for clinical analytes.
+    /** Critical thresholds for clinical analytes.
      * Each entry defines: analyte name (lowercase), minimum threshold, maximum threshold.
      * If the value is OUTSIDE the range [min, max], the critical alert is activated.
      *
@@ -53,15 +51,18 @@ public class IngestLabService implements IngestLabUseCase {
     );
 
     private final LabPersistencePort persistencePort;
+    private final CloudWatchEmfMetrics metrics;
 
     /**
      * Constructor for standard CDI injection.
      *
      * @param persistencePort persistence port (injected by Quarkus/CDI)
+     * @param metrics         CloudWatch EMF metrics
      */
-    public IngestLabService(LabPersistencePort persistencePort) {
+    public IngestLabService(LabPersistencePort persistencePort, CloudWatchEmfMetrics metrics) {
         this.persistencePort = Objects.requireNonNull(persistencePort,
                 "LabPersistencePort cannot be null");
+        this.metrics = Objects.requireNonNull(metrics, "CloudWatchEmfMetrics cannot be null");
     }
 
     @Override
@@ -71,6 +72,12 @@ public class IngestLabService implements IngestLabUseCase {
         LabResult labToSave = evaluateCriticalAlerts(command);
 
         persistencePort.saveLab(labToSave);
+
+        // Log success metric
+        metrics.logSuccess(0.0); // Duration not tracked here, handler does it
+        if (labToSave.criticalAlert()) {
+            metrics.logCriticalAlertTriggered();
+        }
     }
 
     // ─── Mandatory field validation ───────────────────────────────

@@ -1,11 +1,11 @@
 package com.hospital.alertas.application.service;
 
 import com.hospital.alertas.application.ports.outbound.LabPersistencePort;
-import com.hospital.alertas.domain.model.EstadoVisibilidad;
 import com.hospital.alertas.domain.model.LabResult;
-import com.hospital.alertas.domain.model.NotificacionEnviada;
 import com.hospital.alertas.domain.model.PatientId;
 import com.hospital.alertas.domain.model.PatientTimeline;
+import com.hospital.alertas.domain.model.SentNotification;
+import com.hospital.alertas.domain.model.VisibilityStatus;
 
 import java.util.*;
 import java.util.Optional;
@@ -35,7 +35,7 @@ public class InMemoryLabPersistence implements LabPersistencePort {
     }
 
     @Override
-    public Optional<LabResult> obtenerUltimoLaboratorio(PatientId patientId) {
+    public Optional<LabResult> findLatestByPatient(PatientId patientId) {
         Objects.requireNonNull(patientId, "PatientId no puede ser nulo");
         List<LabResult> labs = store.getOrDefault(patientId.value(), List.of());
         if (labs.isEmpty()) {
@@ -46,7 +46,7 @@ public class InMemoryLabPersistence implements LabPersistencePort {
     }
 
     @Override
-    public Optional<PatientTimeline> obtenerExpedienteCompleto(PatientId patientId) {
+    public Optional<PatientTimeline> findCompleteRecord(PatientId patientId) {
         Objects.requireNonNull(patientId, "PatientId no puede ser nulo");
         List<LabResult> labs = store.getOrDefault(patientId.value(), List.of());
         if (labs.isEmpty()) {
@@ -56,11 +56,11 @@ public class InMemoryLabPersistence implements LabPersistencePort {
     }
 
     @Override
-    public void actualizarEstadoVisibilidad(PatientId patientId, String labId,
-                                             EstadoVisibilidad nuevoEstado, long expectedVersion) {
+    public void updateVisibilityStatus(PatientId patientId, String labId,
+                                        VisibilityStatus newStatus, long expectedVersion) {
         Objects.requireNonNull(patientId, "PatientId no puede ser nulo");
         Objects.requireNonNull(labId, "labId no puede ser nulo");
-        Objects.requireNonNull(nuevoEstado, "nuevoEstado no puede ser nulo");
+        Objects.requireNonNull(newStatus, "newStatus no puede ser nulo");
 
         List<LabResult> labs = store.getOrDefault(patientId.value(), List.of());
         for (int i = 0; i < labs.size(); i++) {
@@ -69,7 +69,7 @@ public class InMemoryLabPersistence implements LabPersistencePort {
                 if (lab.version() != expectedVersion) {
                     throw new IllegalStateException("Version mismatch: expected " + expectedVersion + ", found " + lab.version());
                 }
-                LabResult updated = lab.withEstadoVisibilidad(nuevoEstado).withIncrementedVersion();
+                LabResult updated = lab.withEstadoVisibilidad(newStatus).withIncrementedVersion();
                 labs.set(i, updated);
                 return;
             }
@@ -78,13 +78,13 @@ public class InMemoryLabPersistence implements LabPersistencePort {
     }
 
     @Override
-    public void registrarNotificacion(PatientId patientId, String labId,
-                                       NotificacionEnviada notificacion,
-                                       EstadoVisibilidad nuevoEstado, long expectedVersion) {
+    public void registerNotification(PatientId patientId, String labId,
+                                      SentNotification notification,
+                                      VisibilityStatus newStatus, long expectedVersion) {
         Objects.requireNonNull(patientId, "PatientId no puede ser nulo");
         Objects.requireNonNull(labId, "labId no puede ser nulo");
-        Objects.requireNonNull(notificacion, "notificacion no puede ser nula");
-        Objects.requireNonNull(nuevoEstado, "nuevoEstado no puede ser nulo");
+        Objects.requireNonNull(notification, "notification no puede ser nulo");
+        Objects.requireNonNull(newStatus, "newStatus no puede ser nulo");
 
         List<LabResult> labs = store.getOrDefault(patientId.value(), List.of());
         for (int i = 0; i < labs.size(); i++) {
@@ -93,8 +93,8 @@ public class InMemoryLabPersistence implements LabPersistencePort {
                 if (lab.version() != expectedVersion) {
                     throw new IllegalStateException("Version mismatch: expected " + expectedVersion + ", found " + lab.version());
                 }
-                LabResult withNotification = lab.withNotificacionAgregada(notificacion);
-                LabResult updated = withNotification.withEstadoVisibilidad(nuevoEstado).withIncrementedVersion();
+                LabResult withNotification = lab.withNotificacionAgregada(notification);
+                LabResult updated = withNotification.withEstadoVisibilidad(newStatus).withIncrementedVersion();
                 labs.set(i, updated);
                 return;
             }

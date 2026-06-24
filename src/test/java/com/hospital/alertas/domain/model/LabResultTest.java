@@ -17,14 +17,13 @@ import static org.junit.jupiter.api.Assertions.*;
 class LabResultTest {
 
     private static final PatientId PATIENT_ID = new PatientId("PAC001");
-    // Translations: Biometria Hematica -> Hematic Biometry
-    private static final String TEST_TYPE = "Hematic Biometry"; 
+    private static final String TEST_TYPE = "Complete Blood Count";
     private static final Map<String, String> VALUES = Map.of(
-            "Hemoglobin", "14.5 g/dL", // Translated key names implicitly through usage/context
+            "Hemoglobin", "14.5 g/dL",
             "Leukocytes", "7500 /uL"
     );
     private static final Instant TIMESTAMP = Instant.parse("2026-06-01T10:30:00Z");
-    private static final String S3_PATH = "s3://hc-laboratorios/2026/06/01/PAC001/BH-001.pdf";
+    private static final String S3_PATH = "s3://hc-laboratories/2026/06/01/PAC001/BH-001.pdf";
 
     private LabResult createValidLab() {
         return new LabResultTestBuilder()

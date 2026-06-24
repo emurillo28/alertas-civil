@@ -166,8 +166,8 @@ public final class LabResultTestBuilder {
      */
     public static LabResult aLabWithCriticalHemoglobin() {
         return new LabResultTestBuilder()
-                .withSingleAnalyte("Hemoglobin", "5.2 g/dL")
-                .withTestType("Complete Blood Count")
+                .withSingleAnalyte("Hemoglobina", "5.2 g/dL")
+                .withTestType("Hemograma Completo")
                 .build();
     }
 
@@ -176,8 +176,8 @@ public final class LabResultTestBuilder {
      */
     public static LabResult aLabWithCriticalPotassium() {
         return new LabResultTestBuilder()
-                .withSingleAnalyte("Potassium", "7.8 mEq/L")
-                .withTestType("Serum Electrolytes")
+                .withSingleAnalyte("Potasio", "7.8 mEq/L")
+                .withTestType("Electrolitos Sericos")
                 .build();
     }
 
@@ -186,8 +186,42 @@ public final class LabResultTestBuilder {
      */
     public static LabResult aLabWithCriticalGlucose() {
         return new LabResultTestBuilder()
-                .withSingleAnalyte("Glucose", "520 mg/dL")
-                .withTestType("Clinical Chemistry")
+                .withSingleAnalyte("Glucosa", "520 mg/dL")
+                .withTestType("Quimica Sanguinea")
                 .build();
+    }
+
+    // ─── Spanish aliases for backward compatibility with tests ──────────────
+
+    /**
+     * @deprecated Use {@link #aNormalLab()} instead.
+     */
+    @Deprecated
+    public static LabResult unLabNormal() {
+        return aNormalLab();
+    }
+
+    /**
+     * @deprecated Use {@link #aLabWithCriticalHemoglobin()} instead.
+     */
+    @Deprecated
+    public static LabResult unLabConHemoglobinaCritica() {
+        return aLabWithCriticalHemoglobin();
+    }
+
+    /**
+     * @deprecated Use {@link #aLabWithCriticalPotassium()} instead.
+     */
+    @Deprecated
+    public static LabResult unLabConPotasioCritico() {
+        return aLabWithCriticalPotassium();
+    }
+
+    /**
+     * @deprecated Use {@link #aLabWithCriticalGlucose()} instead.
+     */
+    @Deprecated
+    public static LabResult unLabConGlucosaCritica() {
+        return aLabWithCriticalGlucose();
     }
 }
