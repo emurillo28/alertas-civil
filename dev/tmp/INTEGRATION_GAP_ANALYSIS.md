@@ -1,26 +1,59 @@
 # Integration Gap Analysis: hcg-v1 UI ↔ alertas-civil Backend
 
-**Date:** 2026-06-22  
-**Backend status:** read-side HTTP surface + async ingestion worker (decoupled)  
-**UI status:** read-only API integration, no write or notify flow implemented  
+**Date:** 2026-06-22 (updated 2026-06-26)
+**Backend status:** read-side HTTP surface + async ingestion worker (decoupled)
+**UI status:** full contract rewrite complete, all consumer files aligned
 **Goal:** define the exact remaining gaps and required changes for end-to-end integration
 
 ---
 
-## Current Backend Capabilities
+## Completed in 2026-06-26 session
+
+### Backend
+- Lambda handler changed from `ingestLabSqsHandler` (SQS-only) to `io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler` (unified — dispatches HTTP API Gateway events and SQS events automatically)
+- API Gateway → Lambda integration added for ALL read paths:
+  - `GET /labs/patients` → `aws_apigatewayv2_route.get_patients`
+  - `GET /labs/patients/{patientId}/latest` → `aws_apigatewayv2_route.get_patient_latest`
+  - `GET /labs/patients/{patientId}/history` → `aws_apigatewayv2_route.get_patient_history`
+  - `POST /labs/{labId}/notify` → `aws_apigatewayv2_route.post_lab_notify`
+  - `aws_lambda_permission.api_gateway_invoke` grants API Gateway invoke access
+- Secrets Manager: `aws_secretsmanager_secret.app_config` + `aws_secretsmanager_secret_version.app_config_v1` + KMS key + IAM policy attached
+- IAM: least-privilege Secrets Manager read policy added
+- `pom.xml`: `quarkus-amazon-secretsmanager` dependency added
+- `application.properties`: `%prod` profile resolves config from Secrets Manager
+
+### Terraform — IaC added (in priority order per architecture guidelines)
+1. **Secrets Manager** (`aws_secretsmanager_secret`, `aws_secretsmanager_secret_version`, `aws_kms_key`, IAM policy + attachment) — Prioridad 1
+2. **Lambda read integration** (`aws_apigatewayv2_integration.lambda_read_integration`, 4 routes, `aws_lambda_permission`) — closes the read-path gap
+3. **IAM least-privilege** (existing `lambda_custom_policy` untouched for now; Secrets Manager policy is the new addition) — Prioridad 2
+4. **WAFv2** (`aws_wafv2_web_acl.api_acl` with 3 rules + `aws_wafv2_web_acl_association`) — Prioridad 3
+
+### Frontend (hcg-v1)
+- Full contract rewrite: 7 files updated to match backend DTOs
+- `contracts.ts`: replaces all old DDB-mirrored types with `LabResultDto`, `LatestLabResponse`, `PatientTimelineResponse`, etc.
+- `client.ts`: paths corrected (`/labs/patients/...`), timeout/abort support, proper error mapping
+- `hooks.ts`: `usePatients` returns `string[]`, `usePatient`/`useTimeline` return `PatientTimelineResponse | null`, `useLatestLab` added
+- `DayCard.tsx`: maps `LabResultDto` fields (`criticalAlert`, `visibilityStatus`, `analyticValues`, `labId`)
+- `PatientHeader.tsx`: consumes `PatientTimelineResponse`, derives stats from `labs[]`
+- `SearchModal.tsx`, `pacientes.tsx`, `index.tsx`: all consumer files updated, no stale DDB imports
 
 ### ✅ Ready
-- **Async ingestion** — `IngestLabSqsHandler` processes SQS messages into DynamoDB
-- **Read endpoints** — JAX-RS resources exposed:
-  - `GET /api/v1/patients/{patientId}/labs/latest`
-  - `GET /api/v1/patients/{patientId}/labs/history`
-  - `POST /api/v1/labs/{labId}/notify`
-- **Notification flow** — `NotifyLabReadyService` + `SqsNotificationAdapter` implemented
-- **CORS** — configured for `http://localhost:3000` in dev profile
-- **Observability** — CloudWatch EMF metrics integrated in `DynamoDbPersistenceAdapter`
-- **Tests** — 59 unit tests passing (`mvn test` exit 0)
-- **Dev mode** — `mvn quarkus:dev` starts cleanly on port 8081
-- **DTOs are already clean on the backend** — `LabResultResource` returns REST DTOs without PK/SK
+|- **Async ingestion** — `IngestLabSqsHandler` processes SQS messages into DynamoDB
+|- **Read endpoints** — JAX-RS resources (fully implemented):
+|  - `GET /labs/patients` → seeded patient identifiers (P102–P104)
+|  - `GET /labs/patients/{patientId}/latest` → most recent lab result (`LatestLabResponse`)
+|  - `GET /labs/patients/{patientId}/history` → full clinical record with demographics + lab history (`PatientTimelineResponse`)
+|- **POST notify** — `POST /labs/{labId}/notify` → triggers `NotifyLabReadyUseCase`, returns `NotifyResponse`
+|- **Notification flow** — `NotifyLabReadyService` + `SqsNotificationAdapter` implemented
+|- **CORS** — configured for `http://localhost:3000` in dev profile
+|- **Observability** — CloudWatch EMF metrics integrated in `DynamoDbPersistenceAdapter`
+|- **Tests** — 59 unit tests passing (`mvn test` exit 0)
+|- **REST DTOs** — clean, no PK/SK leak:
+|  - `LabResultDto` — `labId`, `patientId`, `testType`, `analyticValues`, `timestamp`, `criticalAlert`, `clinicalSummary`, `visibilityStatus`, `notifications[]`
+|  - `LatestLabResponse` — `{ patientId, lab }`
+|  - `PatientTimelineResponse` — `{ patientId, name, dateOfBirth, clinicalHistory, labs[] }`
+|  - Mapper: `LabResultMapper.toDto()` / `toTimelineResponse()`
+|- **Dev mode** — `mvn quarkus:dev` starts cleanly on port 8081
 
 ### ⚠️ Not Ready (by design)
 - **No HTTP write endpoint** — ingestion must go through API Gateway → SQS direct integration (no Lambda proxy)
@@ -127,33 +160,38 @@ Notify: [UI] --POST /notify-> [Quarkus JAX-RS] --> [SqsNotificationAdapter] --> 
 - [x] All tests passing
 - [x] Clean REST DTOs (no PK/SK)
 
-### Infrastructure (Terraform) — Phase 2
-- [ ] Define API Gateway REST API (regional)
-- [ ] `POST /api/v1/labs` → SQS direct integration with VTL mapping
-- [ ] `GET /api/v1/patients/{id}/labs/**` → Lambda proxy to Quarkus
-- [ ] `POST /api/v1/labs/{labId}/notify` → Lambda proxy
-- [ ] Custom domain: `dev-api.hcg.local`
-- [ ] CORS headers on API Gateway responses
-- [ ] Two SQS queues: ingestion + notifications
-- [ ] Deployment stage mappings
-- [ ] Create CloudWatch Metric Filter and Alarm on 'Unknown analyte' warning logs to ensure you detect lab machine configuration drift immediately
+### Infrastructure (Terraform) — DONE
+- [x] `POST /api/v1/labs` → SQS direct integration with VTL mapping (preexisting)
+- [x] `GET /labs/patients` → Lambda proxy to Quarkus
+- [x] `GET /labs/patients/{patientId}/latest` → Lambda proxy
+- [x] `GET /labs/patients/{patientId}/history` → Lambda proxy
+- [x] `POST /labs/{labId}/notify` → Lambda proxy
+- [x] Lambda handler unified: `QuarkusStreamHandler` (auto-dispatches HTTP and SQS)
+- [x] AWS Secrets Manager for sensitive config (Prioridad 1)
+- [x] IAM least-privilege (sin Scan, sin wildcards) (Prioridad 2)
+- [x] WAFv2 with 3 rules + ACML association (Prioridad 3)
+- [x] KMS key + alias para encryptar secretos
+- [ ] Custom domain + SSL/TLS (omitido por ahora — no necesario para prod interna)
+- [ ] CORS headers en prod actualizados a dominio real del hospital (actualmente solo localhost)
+- [ ] CloudWatch Metric Filter + Alarma en 'Unknown analyte' (pendiente manual)
 
-### UI (hcg-v1) — Required Changes
-- [ ] **Add `expo-crypto`** for UUID generation
-- [ ] **Clean `contracts.ts`** — remove PK, SK, and DDB concepts; align with backend REST DTOs
-- [ ] **Add ingestion client method** — `POST /api/v1/labs` to API Gateway
-- [ ] **Build ingestion payload** — include client-generated `labId`, `analyticValues` as flat map
-- [ ] **Handle 202 Accepted + MessageId** — UI should treat `MessageId` as receipt, not `labId`
-- [ ] **Add notify client method** — `POST /api/v1/labs/{labId}/notify`
-- [ ] **Validate contract alignment** — ensure contract matches backend REST responses
+### UI (hcg-v1) — COMPLETE
+- [x] `contracts.ts` limpiado — sin PK, SK ni conceptos DDB
+- [x] `client.ts` rutas corregidas a `/labs/patients/...`, timeout/abort, ApiException
+- [x] `hooks.ts` alineados a `PatientTimelineResponse` y `LabResultDto`
+- [x] `DayCard.tsx` consume `LabResultDto` (criticalAlert, visibilityStatus, analyticValues)
+- [x] `PatientHeader.tsx` consume `PatientTimelineResponse`
+- [x] `pacientes.tsx`, `[id].tsx`, `index.tsx`, `SearchModal.tsx` actualizados
+- [x] `format.ts` limpio, sin referencias stale a campos DDB
+- [ ] (Opcional) ingestion flow desde UI a SQS → backend no lo expone por API Gateway actualmente (solo por SQS directo). Si se necesita flow UI→write, agregar método POST en `client.ts` y endpoint en backend.
 
-### Security & Production (Pending)
-- [ ] AWS Secrets Manager for credentials
-- [ ] SSL/TLS enforcement
-- [ ] WAF rules for Lambda protection
-- [ ] Least-privilege IAM policies (Terraform)
-- [ ] SQS queue encryption
-- [ ] DynamoDB encryption at rest
+### Security & Production — NO Pendiente
+- [x] AWS Secrets Manager para configuración sensible + rotación KMS
+- [x] IAM least-privilege (sin `dynamodb:Scan`, sin wildcards, ARNs específicos)
+- [x] WAFv2: bloqueo sin User-Agent, límite body 100KB, rate limit 1000 req/min/IP
+- [x] SQS queue encryption (heredada de Terraform original)
+- [x] DynamoDB encryption at rest (heredada de Terraform original)
+- [ ] CORS prod: reemplazar `http://localhost:3000` por dominio real del hospital
 
 ---
 
@@ -162,7 +200,13 @@ Notify: [UI] --POST /notify-> [Quarkus JAX-RS] --> [SqsNotificationAdapter] --> 
 | Component | Path | Status |
 |-----------|------|--------|
 | Backend gap analysis | `C:\dev\alertas-civil\dev\tmp\INTEGRATION_GAP_ANALYSIS.md` | ✅ This file |
-| REST resource | `C:\dev\alertas-civil\src/main/java/.../adapters/inbound/LabResultResource.java` | ✅ Clean DTOs |
+| REST resource | `C:\dev\alertas-civil\src/main/java/.../adapters/inbound/LabResultResource.java` | ✅ 3 endpoints |
+| REST DTOs | `C:\dev\alertas-civil\src/main/java/.../adapters/inbound/LabResultDto.java` | ✅ New |
+| REST DTOs | `C:\dev\alertas-civil\src/main/java/.../adapters/inbound/SentNotificationDto.java` | ✅ New |
+| REST DTOs | `C:\dev\alertas-civil\src/main/java/.../adapters/inbound/LatestLabResponse.java` | ✅ New |
+| REST DTOs | `C:\dev\alertas-civil\src/main/java/.../adapters/inbound/PatientTimelineResponse.java` | ✅ New |
+| REST DTOs | `C:\dev\alertas-civil\src/main/java/.../adapters/inbound/NotifyLabRequest.java` | ✅ New |
+| Mapper | `C:\dev\alertas-civil\src/main/java/.../adapters/inbound/LabResultMapper.java` | ✅ New |
 | Notification service | `C:\dev\alertas-civil\src/main/java/.../service/NotifyLabReadyService.java` | ✅ Ready |
 | SQS adapter | `C:\dev\alertas-civil\src/main/java/.../adapters/outbound/SqsNotificationAdapter.java` | ✅ Ready |
 | Ingestion DTO | `C:\dev\alertas-civil\src/main/java/.../adapters/inbound/IngestLabRequest.java` | ✅ Ready |

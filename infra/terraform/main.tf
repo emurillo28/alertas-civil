@@ -1,3 +1,13 @@
+terraform {
+  required_version = ">= 1.5.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
 provider "aws" {
   region = var.aws_region
 
@@ -10,7 +20,61 @@ provider "aws" {
   }
 }
 
-# ─── DYNAMODB SINGLE-TABLE DESIGN ────────────────────────────────────────────
+# ─── DATA SOURCES ─────────────────────────────────────────────────────────────
+data "aws_caller_identity" "current" {}
+
+# ─── VARIABLES ────────────────────────────────────────────────────────────────
+variable "aws_region" {
+  type     = string
+  default  = "us-east-1"
+}
+
+variable "environment" {
+  type     = string
+  default  = "dev"
+}
+
+variable "lambda_zip_path" {
+  type    = string
+  default = ""
+}
+
+variable "lambda_memory" {
+  type    = number
+  default = 512
+}
+
+variable "lambda_timeout" {
+  type    = number
+  default = 30
+}
+
+variable "dynamodb_table_name" {
+  type    = string
+  default = "hc-alertas"
+}
+
+variable "s3_bucket_prefix" {
+  type    = string
+  default = "hc-alertas"
+}
+
+variable "sqs_ingest_name" {
+  type    = string
+  default = "hc-alertas-ingest-queue"
+}
+
+variable "sqs_dlq_name" {
+  type    = string
+  default = "hc-alertas-ingest-dlq"
+}
+
+variable "log_retention_days" {
+  type    = number
+  default = 30
+}
+
+# ─── DYNAMODB SINGLE-TABLE DESIGN ─────────────────────────────────────────────
 resource "aws_dynamodb_table" "hc_alertas" {
   name         = var.dynamodb_table_name
   billing_mode = "PAY_PER_REQUEST"
@@ -31,7 +95,6 @@ resource "aws_dynamodb_table" "hc_alertas" {
     enabled = true
   }
 
-  # Control de eliminación accidental en producción
   deletion_protection_enabled = var.environment == "prod" ? true : false
 
   tags = {
@@ -45,7 +108,6 @@ resource "aws_s3_bucket" "clinical_docs" {
   force_destroy = var.environment == "prod" ? false : true
 }
 
-# Bloquear todo el acceso público por defecto (Seguridad de datos clínicos / HIPAA)
 resource "aws_s3_bucket_public_access_block" "clinical_docs_block" {
   bucket = aws_s3_bucket.clinical_docs.id
 
@@ -55,15 +117,14 @@ resource "aws_s3_bucket_public_access_block" "clinical_docs_block" {
   restrict_public_buckets = true
 }
 
-# Habilitar versionado para recuperar PDFs en caso de sobreescritura accidental
 resource "aws_s3_bucket_versioning" "clinical_docs_versioning" {
   bucket = aws_s3_bucket.clinical_docs.id
+
   versioning_configuration {
     status = "Enabled"
   }
 }
 
-# Encriptación del lado del servidor (SSE-S3)
 resource "aws_s3_bucket_server_side_encryption_configuration" "clinical_docs_encryption" {
   bucket = aws_s3_bucket.clinical_docs.id
 
@@ -74,30 +135,49 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "clinical_docs_enc
   }
 }
 
-# ─── QUEUES SQS Y DLQ NATIVA ──────────────────────────────────────────────────
-# Cola de Descarte (Dead Letter Queue) para mensajes fallidos tras agotar reintentos
-resource "aws_sqs_queue" "dlq_queue" {
+# ─── SQS: DLQ + COLA DE INGESTA + COLA DE NOTIFICACIONES + DLQ NOTIFICACIONES ─
+resource "aws_sqs_queue" "dlq_ingest_queue" {
   name                      = var.sqs_dlq_name
-  message_retention_seconds = 1209600 # Retiene mensajes por 14 días para análisis forense
-  sqs_managed_sse_enabled   = true    # Encriptación del lado del servidor activa
+  message_retention_seconds = 1209600 # 14 días
+  sqs_managed_sse_enabled   = true
 }
 
-# Cola de Ingesta Principal
 resource "aws_sqs_queue" "ingest_queue" {
   name                      = var.sqs_ingest_name
-  message_retention_seconds = 86400  # Retiene mensajes por 1 día
-  visibility_timeout_seconds = 60    # Suficiente tiempo para que la Lambda procese el lote
+  message_retention_seconds = 86400  # 1 día
+  visibility_timeout_seconds = 60    # Suficiente para procesar el lote
   sqs_managed_sse_enabled   = true
 
   redrive_policy = jsonencode({
-    deadLetterTargetArn = aws_sqs_queue.dlq_queue.arn
-    maxReceiveCount     = 4 # Reintenta hasta 4 veces antes de mover a la DLQ
+    deadLetterTargetArn = aws_sqs_queue.dlq_ingest_queue.arn
+    maxReceiveCount     = 4
   })
 }
 
-# ─── ROL IAM PARA LA FUNCIÓN LAMBDA (QUARKUS) ──────────────────────────────────
-resource "aws_iam_role" "lambda_execution_role" {
-  name = "hc-alertas-lambda-role-${var.environment}"
+resource "aws_sqs_queue" "notification_dlq_queue" {
+  name                      = "hc-alertas-notification-dlq"
+  message_retention_seconds = 1209600 # 14 días
+  sqs_managed_sse_enabled   = true
+}
+
+resource "aws_sqs_queue" "notification_queue" {
+  name                      = "hc-alertas-notification-queue"
+  message_retention_seconds = 1209600 # 14 días
+  sqs_managed_sse_enabled   = true
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.notification_dlq_queue.arn
+    maxReceiveCount     = 4
+  })
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# IAM: ROLES LEAST-PRIVILEGE SEPARADOS (HTTP vs SQS Worker)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ─── ROL HTTP (SOLO LECTURA) ──────────────────────────────────────────────────
+resource "aws_iam_role" "lambda_http_role" {
+  name = "hc-alertas-lambda-http-role-${var.environment}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -113,78 +193,138 @@ resource "aws_iam_role" "lambda_execution_role" {
   })
 }
 
-# Política básica de ejecución de Lambda (CloudWatch Logs)
-resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
-  role       = aws_iam_role.lambda_execution_role.name
+resource "aws_iam_role_policy_attachment" "http_basic_execution" {
+  role       = aws_iam_role.lambda_http_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-# Política en línea para permisos específicos de DynamoDB, S3 y SQS
-resource "aws_iam_policy" "lambda_custom_policy" {
-  name        = "hc-alertas-lambda-policy-${var.environment}"
-  description = "Permisos necesarios para el backend de Alertas Médicas (DynamoDB, S3 y SQS)"
+resource "aws_iam_policy" "http_policy" {
+  name        = "hc-alertas-lambda-http-policy-${var.environment}"
+  description = "Permisos de SOLO LECTURA para la Lambda HTTP (API Gateway)"
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      # DynamoDB: Permisos sobre la Single-Table
       {
         Effect = "Allow"
         Action = [
-          "dynamodb:PutItem",
           "dynamodb:GetItem",
-          "dynamodb:UpdateItem",
-          "dynamodb:DeleteItem",
           "dynamodb:Query",
-          "dynamodb:Scan"
         ]
         Resource = [
           aws_dynamodb_table.hc_alertas.arn,
-          "${aws_dynamodb_table.hc_alertas.arn}/index/*"
+          "${aws_dynamodb_table.hc_alertas.arn}/index/*",
         ]
       },
-      # S3: Permisos sobre el bucket de PDFs clínicos
       {
         Effect = "Allow"
-        Action = [
-          "s3:PutObject",
-          "s3:GetObject",
-          "s3:DeleteObject",
-          "s3:ListBucket"
-        ]
-        Resource = [
-          aws_s3_bucket.clinical_docs.arn,
-          "${aws_s3_bucket.clinical_docs.arn}/*"
-        ]
+        Action   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+        Resource = aws_secretsmanager_secret.app_config.arn
       },
-      # SQS: Permisos para consumir de la cola de ingesta
       {
         Effect = "Allow"
-        Action = [
-          "sqs:ReceiveMessage",
-          "sqs:DeleteMessage",
-          "sqs:GetQueueAttributes"
-        ]
-        Resource = aws_sqs_queue.ingest_queue.arn
+        Action   = ["kms:Decrypt", "kms:DescribeKey"]
+        Resource = aws_kms_key.app_secrets.arn
+      },
+      {
+        Effect = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = aws_sqs_queue.notification_queue.arn
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "http_custom" {
+  role       = aws_iam_role.lambda_http_role.name
+  policy_arn = aws_iam_policy.http_policy.arn
+}
+
+# ─── ROL SQS WORKER (ESCRITURA + CONSUMO SQS) ────────────────────────────────
+resource "aws_iam_role" "lambda_sqs_role" {
+  name = "hc-alertas-lambda-sqs-role-${var.environment}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
       }
     ]
   })
 }
 
-resource "aws_iam_role_policy_attachment" "lambda_custom" {
-  role       = aws_iam_role.lambda_execution_role.name
-  policy_arn = aws_iam_policy.lambda_custom_policy.arn
+resource "aws_iam_role_policy_attachment" "sqs_basic_execution" {
+  role       = aws_iam_role.lambda_sqs_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-# ─── INFRAESTRUCTURA DE DEPLOYMENT: AWS LAMBDA + GRAALVM NATIVE IMAGE ─────────
-resource "aws_lambda_function" "quarkus_lambda" {
-  function_name = "hc-alertas-backend-${var.environment}"
-  role          = aws_iam_role.lambda_execution_role.arn
-  
-  # Usar custom.al2023 para binarios nativos auto-contenidos (GraalVM)
+resource "aws_iam_policy" "sqs_policy" {
+  name        = "hc-alertas-lambda-sqs-policy-${var.environment}"
+  description = "Permisos de ESCRITURA y consumo SQS para la Lambda Worker"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:Query",
+        ]
+        Resource = [
+          aws_dynamodb_table.hc_alertas.arn,
+          "${aws_dynamodb_table.hc_alertas.arn}/index/*",
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+        ]
+        Resource = aws_sqs_queue.ingest_queue.arn
+      },
+      {
+        Effect = "Allow"
+        Action   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+        Resource = aws_secretsmanager_secret.app_config.arn
+      },
+      {
+        Effect = "Allow"
+        Action   = ["kms:Decrypt", "kms:DescribeKey"]
+        Resource = aws_kms_key.app_secrets.arn
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "sqs_custom" {
+  role       = aws_iam_role.lambda_sqs_role.name
+  policy_arn = aws_iam_policy.sqs_policy.arn
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LAMBDAS: MISMO BINARIO, HANDLER ÚNICO, ROLES DIFERENTES
+# Ambas usan: handler = "io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler"
+# La diferenciación se hace mediante la variable de entorno QUARKUS_LAMBDA_HANDLER:
+#   - HTTP: sin QUARKUS_LAMBDA_HANDLER → Quarkus despacha a Vert.x/JAX-RS
+#   - SQS:  QUARKUS_LAMBDA_HANDLER=ingestLabSqsHandler → despacha a ese bean CDI
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ─── LAMBDA HTTP (API Gateway → REST JAX-RS) ──────────────────────────────────
+resource "aws_lambda_function" "http_lambda" {
+  function_name = "hcg-alertas-backend-http-${var.environment}"
+  role          = aws_iam_role.lambda_http_role.arn
   runtime       = "provided.al2023"
-  handler       = "ingestLabSqsHandler"
-  
+  handler       = "io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler"
+
   filename         = var.lambda_zip_path != "" ? var.lambda_zip_path : "${path.module}/dummy-lambda.zip"
   source_code_hash = var.lambda_zip_path != "" ? filebase64sha256(var.lambda_zip_path) : null
 
@@ -196,6 +336,8 @@ resource "aws_lambda_function" "quarkus_lambda" {
       QUARKUS_PROFILE          = var.environment
       APP_DYNAMODB_TABLE_NAME  = aws_dynamodb_table.hc_alertas.name
       AWS_S3_BUCKET_NAME       = aws_s3_bucket.clinical_docs.id
+      app.sqs.notification-queue-url = aws_sqs_queue.notification_queue.url
+      # Sin QUARKUS_LAMBDA_HANDLER → Quarkus usa el router HTTP por defecto
     }
   }
 
@@ -204,19 +346,68 @@ resource "aws_lambda_function" "quarkus_lambda" {
   }
 }
 
-# Event Source Mapping para gatillar Lambda desde SQS
+# ─── LAMBDA WORKER (SQS → ingestLabSqsHandler) ────────────────────────────────
+resource "aws_lambda_function" "sqs_lambda" {
+  function_name = "hcg-alertas-backend-worker-${var.environment}"
+  role          = aws_iam_role.lambda_sqs_role.arn
+  runtime       = "provided.al2023"
+  handler       = "io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler"
+
+  filename         = var.lambda_zip_path != "" ? var.lambda_zip_path : "${path.module}/dummy-lambda.zip"
+  source_code_hash = var.lambda_zip_path != "" ? filebase64sha256(var.lambda_zip_path) : null
+
+  memory_size = var.lambda_memory
+  timeout     = var.lambda_timeout
+
+  environment {
+    variables = {
+      QUARKUS_PROFILE          = var.environment
+      QUARKUS_LAMBDA_HANDLER   = "ingestLabSqsHandler"
+      APP_DYNAMODB_TABLE_NAME  = aws_dynamodb_table.hc_alertas.name
+      AWS_S3_BUCKET_NAME       = aws_s3_bucket.clinical_docs.id
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [filename, source_code_hash]
+  }
+}
+
+# ─── CLOUDWATCH LOG GROUPS SEPARADOS ──────────────────────────────────────────
+resource "aws_cloudwatch_log_group" "http_lambda_logs" {
+  name              = "/aws/lambda/${aws_lambda_function.http_lambda.function_name}"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_cloudwatch_log_group" "sqs_lambda_logs" {
+  name              = "/aws/lambda/${aws_lambda_function.sqs_lambda.function_name}"
+  retention_in_days = var.log_retention_days
+}
+
+# ─── PERMISOS: API Gateway invoca solo la Lambda HTTP ─────────────────────────
+resource "aws_lambda_permission" "http_api_gateway_invoke" {
+  statement_id  = "AllowAPIGatewayInvokeHTTP"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.http_lambda.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/*"
+}
+
+# ─── EVENT SOURCE MAPPING: SQS → Lambda Worker ────────────────────────────────
 resource "aws_lambda_event_source_mapping" "sqs_mapping" {
   event_source_arn = aws_sqs_queue.ingest_queue.arn
-  function_name    = aws_lambda_function.quarkus_lambda.arn
-  batch_size       = 10 # Procesa lotes de hasta 10 mensajes concurrentes
+  function_name    = aws_lambda_function.sqs_lambda.arn
+  batch_size       = 10
   enabled          = true
 }
 
-# ─── API GATEWAY (HTTP API - V2) CON INTEGRACIÓN SQS DIRECTA ──────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# API GATEWAY (HTTP API v2) + INTEGRACIONES
+# ══════════════════════════════════════════════════════════════════════════════
 resource "aws_apigatewayv2_api" "http_api" {
   name          = "hc-alertas-api-${var.environment}"
   protocol_type = "HTTP"
-  description   = "API Gateway de Alertas Médicas con integración directa a SQS"
+  description   = "API Gateway de Alertas Médicas"
 }
 
 resource "aws_apigatewayv2_stage" "api_stage" {
@@ -240,7 +431,45 @@ resource "aws_apigatewayv2_stage" "api_stage" {
   }
 }
 
-# Rol IAM para que API Gateway pueda escribir en SQS
+resource "aws_cloudwatch_log_group" "api_gw_logs" {
+  name              = "/aws/apigateway/hc-alertas-api-${var.environment}"
+  retention_in_days = var.log_retention_days
+}
+
+# ─── INTEGRACIÓN: API Gateway → Lambda HTTP (proxy v2.0) ─────────────────────
+resource "aws_apigatewayv2_integration" "lambda_read_integration" {
+  api_id                 = aws_apigatewayv2_api.http_api.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.http_lambda.invoke_arn
+  payload_format_version = "2.0"
+}
+
+# ─── RUTAS DE LECTURA (apuntan a Lambda HTTP) ─────────────────────────────────
+resource "aws_apigatewayv2_route" "get_patients" {
+  api_id    = aws_apigatewayv2_api.http_api.id
+  route_key = "GET /labs/patients"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda_read_integration.id}"
+}
+
+resource "aws_apigatewayv2_route" "get_patient_latest" {
+  api_id    = aws_apigatewayv2_api.http_api.id
+  route_key = "GET /labs/patients/{patientId}/latest"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda_read_integration.id}"
+}
+
+resource "aws_apigatewayv2_route" "get_patient_history" {
+  api_id    = aws_apigatewayv2_api.http_api.id
+  route_key = "GET /labs/patients/{patientId}/history"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda_read_integration.id}"
+}
+
+resource "aws_apigatewayv2_route" "post_lab_notify" {
+  api_id    = aws_apigatewayv2_api.http_api.id
+  route_key = "POST /labs/{labId}/notify"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda_read_integration.id}"
+}
+
+# ─── RUTA POST /api/v1/labs → SQS Directa (sin Lambda) ───────────────────────
 resource "aws_iam_role" "api_gateway_role" {
   name = "hc-alertas-apigw-role-${var.environment}"
 
@@ -278,7 +507,6 @@ resource "aws_iam_role_policy_attachment" "apigw_sqs_attachment" {
   policy_arn = aws_iam_policy.apigw_sqs_policy.arn
 }
 
-# Integración nativa API Gateway → SQS SendMessage
 resource "aws_apigatewayv2_integration" "sqs_integration" {
   api_id             = aws_apigatewayv2_api.http_api.id
   integration_type   = "AWS_PROXY"
@@ -286,28 +514,244 @@ resource "aws_apigatewayv2_integration" "sqs_integration" {
   credentials_arn    = aws_iam_role.api_gateway_role.arn
 
   parameter_mapping = {
-    "QueueUrl"    = aws_sqs_queue.ingest_queue.url
-    "MessageBody" = "$request.body"
+    QueueUrl    = aws_sqs_queue.ingest_queue.url
+    MessageBody = "$request.body"
   }
 }
 
-# Ruta que mapea POST /api/v1/labs a SQS
 resource "aws_apigatewayv2_route" "ingest_route" {
   api_id    = aws_apigatewayv2_api.http_api.id
   route_key = "POST /api/v1/labs"
   target    = "integrations/${aws_apigatewayv2_integration.sqs_integration.id}"
 }
 
-# ─── CLOUDWATCH LOG GROUPS ────────────────────────────────────────────────────
-resource "aws_cloudwatch_log_group" "api_gw_logs" {
-  name              = "/aws/apigateway/hc-alertas-api-${var.environment}"
-  retention_in_days = var.log_retention_days
+# ══════════════════════════════════════════════════════════════════════════════
+# SECRETS MANAGER + KMS (Prioridad 1)
+# ══════════════════════════════════════════════════════════════════════════════
+resource "aws_secretsmanager_secret" "app_config" {
+  name_prefix             = "alertas-civil/${var.environment}/"
+  description             = "Configuración sensible del backend Alertas Civil"
+  kms_key_id              = aws_kms_key.app_secrets.arn
+  recovery_window_in_days = 7
+
+  tags = {
+    Name      = "alertas-civil-app-config-${var.environment}"
+    ManagedBy = "Terraform"
+  }
 }
 
-resource "aws_cloudwatch_log_group" "lambda_logs" {
-  name              = "/aws/lambda/${aws_lambda_function.quarkus_lambda.function_name}"
-  retention_in_days = var.log_retention_days
+resource "aws_secretsmanager_secret_version" "app_config_v1" {
+  secret_id = aws_secretsmanager_secret.app_config.id
+
+  secret_string = jsonencode({
+    dynamodb_table_name = "hc-alertas"
+    s3_bucket_name      = var.s3_bucket_prefix
+    jwt_signature_key   = "REPLACE_WITH_ACTUAL_JWT_SIGNING_KEY_64chars_min"
+    jwt_issuer          = "alertas-civil-${var.environment}"
+    jwt_ttl_seconds     = "3600"
+  })
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
 }
 
-# ─── DATA SOURCES ─────────────────────────────────────────────────────────────
-data "aws_caller_identity" "current" {}
+resource "aws_kms_key" "app_secrets" {
+  description         = "Clave KMS para encriptar secretos de Alertas Civil"
+  enable_key_rotation = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "Enable IAM User Permissions"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action   = "kms:*"
+        Resource = "*"
+      },
+      {
+        Sid    = "Allow Lambda HTTP to use the key"
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.lambda_http_role.arn
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:DescribeKey",
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "Allow Lambda SQS to use the key"
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.lambda_sqs_role.arn
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:DescribeKey",
+        ]
+        Resource = "*"
+      },
+    ]
+  })
+}
+
+resource "aws_kms_alias" "app_secrets" {
+  name          = "alias/alertas-civil-${var.environment}-secrets"
+  target_key_id = aws_kms_key.app_secrets.key_id
+}
+
+# ─── WAFv2 (Prioridad 3) ──────────────────────────────────────────────────────
+resource "aws_wafv2_ip_set" "allowed_ips" {
+  name               = "alertas-civil-allowed-ips-${var.environment}"
+  scope              = "REGIONAL"
+  ip_address_version = "IPV4"
+  addresses = var.environment == "prod" ? [] : []
+
+  tags = {
+    ManagedBy = "Terraform"
+  }
+}
+
+resource "aws_wafv2_web_acl" "api_acl" {
+  name  = "alertas-civil-api-acl-${var.environment}"
+  scope = "REGIONAL"
+
+  default_action {
+    allow {}
+  }
+
+  rule {
+    name     = "BlockNoUserAgent"
+    priority = 1
+
+    action {
+      block {}
+    }
+
+    statement {
+      byte_match_statement {
+        field_to_match {
+          single_header {
+            name = "user-agent"
+          }
+        }
+        positional_constraint = "EXACTLY_ONE"
+        search_string         = ""
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "BlockNoUserAgent"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  rule {
+    name     = "LimitBodySize"
+    priority = 2
+
+    action {
+      block {}
+    }
+
+    statement {
+      size_constraint_statement {
+        comparison_operator = "GT"
+        size                = 102400 # 100 KB
+
+        field_to_match {
+          body {
+            oversize_handling = "CONTINUE"
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "LimitBodySize"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  rule {
+    name     = "RateLimitPerIP"
+    priority = 3
+
+    action {
+      block {}
+    }
+
+    statement {
+      rate_based_statement {
+        limit              = 1000
+        evaluation_window_sec = 60
+        aggregate_key_type = "IP"
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "RateLimitPerIP"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  visibility_config {
+    cloudwatch_metrics_enabled = true
+    metric_name                = "AlertasCivilApiACL"
+    sampled_requests_enabled   = true
+  }
+
+  tags = {
+    ManagedBy = "Terraform"
+  }
+}
+
+# Asociar WAF al STAGE (no al API ARN con wildcard)
+resource "aws_wafv2_web_acl_association" "api_gateway" {
+  resource_arn = aws_apigatewayv2_stage.api_stage.arn
+  web_acl_arn  = aws_wafv2_web_acl.api_acl.arn
+}
+
+# ─── OUTPUTS ──────────────────────────────────────────────────────────────────
+output "api_endpoint" {
+  description = "API Gateway endpoint URL"
+  value       = aws_apigatewayv2_api.http_api.api_endpoint
+}
+
+output "http_lambda_name" {
+  description = "Nombre de la Lambda HTTP"
+  value       = aws_lambda_function.http_lambda.function_name
+}
+
+output "sqs_lambda_name" {
+  description = "Nombre de la Lambda SQS Worker"
+  value       = aws_lambda_function.sqs_lambda.function_name
+}
+
+output "dynamodb_table_name" {
+  description = "Nombre de la tabla DynamoDB"
+  value       = aws_dynamodb_table.hc_alertas.name
+}
+
+output "s3_bucket_name" {
+  description = "Nombre del bucket S3 de documentos clínicos"
+  value       = aws_s3_bucket.clinical_docs.id
+}
+
+output "sqs_queue_url" {
+  description = "URL de la cola SQS de ingesta"
+  value       = aws_sqs_queue.ingest_queue.id
+}
+
+output "secrets_manager_secret_arn" {
+  description = "ARN del secreto de configuración"
+  value       = aws_secretsmanager_secret.app_config.arn
+}

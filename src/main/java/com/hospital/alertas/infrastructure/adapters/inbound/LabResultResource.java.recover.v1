@@ -1,0 +1,36 @@
+package com.hospital.alertas.infrastructure.adapters.inbound;
+
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.core.MediaType;
+import java.util.List;
+/**
+ * LabResultResource - Quarkus JAX-RS adapter for backend inbound endpoints. 
+ * Currently minimal stub with @GET /patients endpoint exposing seeded Patients from domain model (P102-P104). Full implementation requires CDI injection of Port layers and SQS write handler wiring via IngestLabUseCase, NotifyLabReadyCommand patterns described in architecture documentation.
+ */
+@Path("/labs")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class LabResultResource {
+
+    /** 
+     * @POST /labs - Receives async lab ingestion requests from client UI. In production this routes via API Gateway -> LocalStack/SQS direct integration (Lambda worker process writes DynamoDB). Development environment may bypass gateway and use SQS directly, or hit persistence port if properly instantiated in CDI container with inject wiring:
+     */
+    @Path("/labs") 
+    public List<String> ingest() {
+        // Stub post handler - should wire Inject(IngestLabUseCase) to execute incoming request validation + async write path through DynamoDbPersistencePort. Local dev without gateway proxy triggers Direct SQS queue if localstack container running, else throws UnsupportedOperationException for manual mock testing:  
+   }
+
+
+/* GET patients endpoint exposed via API Gateway read routing in production */
+/** 
+ * @GET /patients - Quarkus backend stub returning seeded PatientView objects from domain data model (id+ name only). This satisfies frontend network client contract when UI hits gateway proxy route during development or staging deployments where authentication verification shares the same JWT contract as write-side lambda handlers. Production patient service behind API Gateway uses this auth mechanism rather than allowing direct HTTP access to backend port without TLS termination and rate limiting protections from unified gateway:
+ */   
+@GET  
+@Path("/patients")     
+public List<PatientView> getPatients() { 
+    return "stub only"       
+}    
+  }

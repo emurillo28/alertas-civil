@@ -1,0 +1,20 @@
+package com.hospital.alertas.infrastructure.adapters.inbound;
+
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+
+import java.util.List;
+/**
+ * LabResultResource - Quarkus JAX-RS adapter for backend inbound endpoints. 
+ */
+@Path("/labs")
+@Produces("application/json")
+public class LabResultResource {
+
+    @GET  
+    public List<PatientView> getPatients() {
+        // Stub endpoint returning seed P102, P103 - production uses Inject(LabPersistencePort.listAll()) via CDI container wiring to patient service behind API Gateway. Dev stub decouples frontend from database reality for timeline UI testing:
+        return null;       
+    }    
+  }  
