@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hospital.alertas.infrastructure.adapters.inbound.IngestLabSqsHandler;
 import com.hospital.alertas.infrastructure.adapters.inbound.IngestLabRequest;
 import io.quarkus.test.common.QuarkusTestResource;
-import io.quarkus.test.junit.QuarkusIntegrationTest;
+import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.*;
 
@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * <p>Verifies the full flow: SQS message -> Handler -> DynamoDB persistence
  */
-@QuarkusIntegrationTest
+@QuarkusTest
 @QuarkusTestResource(LocalStackTestResource.class)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class IngestLabSqsHandlerIntegrationTest {
@@ -30,7 +30,7 @@ class IngestLabSqsHandlerIntegrationTest {
     @Inject
     ObjectMapper objectMapper;
 
-    private static final String TEST_PATIENT = "SQS-TEST-PATIENT";
+    private static final String TEST_PATIENT = "SQSTESTPATIENT";
 
     @Test
     @Order(1)
@@ -89,7 +89,7 @@ class IngestLabSqsHandlerIntegrationTest {
         // Given: Multiple messages in one batch
         IngestLabRequest req1 = new IngestLabRequest(
                 null,
-                TEST_PATIENT + "-1",
+                TEST_PATIENT + "1",
                 "Batch Test 1",
                 Map.of("Potasio", "4.2 mEq/L"),
                 Instant.now().toString(),
@@ -98,7 +98,7 @@ class IngestLabSqsHandlerIntegrationTest {
         );
         IngestLabRequest req2 = new IngestLabRequest(
                 null,
-                TEST_PATIENT + "-2",
+                TEST_PATIENT + "2",
                 "Batch Test 2",
                 Map.of("Sodio", "138 mEq/L"),
                 Instant.now().toString(),

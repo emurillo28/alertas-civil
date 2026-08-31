@@ -4,6 +4,7 @@ import io.quarkus.test.common.QuarkusTestResourceLifecycleManager;
 import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.utility.DockerImageName;
 
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -41,15 +42,19 @@ public class LocalStackTestResource implements QuarkusTestResourceLifecycleManag
         System.out.println("Region: " + region);
         System.out.println("Services: dynamodb, s3, sqs");
 
-        return Map.of(
-                "quarkus.dynamodb.endpoint-override", endpoint,
-                "quarkus.s3.endpoint-override", endpoint,
-                "quarkus.sqs.endpoint-override", endpoint,
-                "quarkus.dynamodb.aws.region", region,
-                "quarkus.s3.aws.region", region,
-                "quarkus.sqs.aws.region", region,
-                "app.dynamodb.table-name", "hc-alertas-test"
-        );
+        Map<String, String> config = new HashMap<>();
+        config.put("quarkus.dynamodb.endpoint-override", endpoint);
+        config.put("quarkus.s3.endpoint-override", endpoint);
+        config.put("quarkus.sqs.endpoint-override", endpoint);
+        config.put("quarkus.dynamodb.aws.region", region);
+        config.put("quarkus.s3.aws.region", region);
+        config.put("quarkus.sqs.aws.region", region);
+        config.put("app.dynamodb.table-name", "hc-alertas-test");
+        config.put("app.sqs.notification-queue-url", endpoint + "/000000000000/notification-queue");
+        config.put("quarkus.aws.credentials.provider", "static");
+        config.put("quarkus.aws.credentials.static-provider.access-key-id", "test-key");
+        config.put("quarkus.aws.credentials.static-provider.secret-access-key", "test-secret");
+        return config;
     }
 
     @Override

@@ -21,6 +21,7 @@ import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedExce
 import software.amazon.awssdk.services.dynamodb.model.ProvisionedThroughputExceededException;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
+import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
 
 import java.time.Instant;
@@ -108,45 +109,69 @@ public class DynamoDbPersistenceAdapter implements LabPersistencePort {
         Objects.requireNonNull(lab, "LabResult cannot be null");
 
         long newVersion = lab.version() + 1;
+        Map<String, AttributeValue> item = toItemMap(lab, newVersion);
 
-        // Build SET expression for UpdateItem
-        // PK and SK go in the Key, not in SET
-        Map<String, AttributeValue> key = Map.of(
-                ATTR_PK, AttributeValue.fromS(lab.patientId().toDynamoPartitionKey()),
-                ATTR_SK, AttributeValue.fromS(SK_LAB_PREFIX + lab.labId())
-        );
+        PutItemRequest.Builder requestBuilder = PutItemRequest.builder()
+                .tableName(tableName)
+                .item(item);
 
-        Map<String, AttributeValue> expressionAttributeValues = new HashMap<>();
-        Map<String, String> expressionAttributeNames = new HashMap<>();
-        StringBuilder updateExpression = new StringBuilder("SET ");
+        // ── Control de Concurrencia Optimista (OCC) ──
+        if (lab.version() == 0) {
+            // New item: must not exist previously
+            requestBuilder.conditionExpression("attribute_not_exists(" + ATTR_PK + ") AND attribute_not_exists(" + ATTR_SK + ")");
+        } else {
+            // Update: check if DB version matches
+            requestBuilder.conditionExpression("#version = :expectedVersion")
+                    .expressionAttributeNames(Map.of("#version", ATTR_VERSION))
+                    .expressionAttributeValues(Map.of(":expectedVersion", AttributeValue.fromN(String.valueOf(lab.version()))));
+        }
 
-        // Map each field using attribute name aliases to avoid reserved keywords
-        addSetClause(updateExpression, expressionAttributeNames, expressionAttributeValues,
-                "#testType", ATTR_TEST_TYPE, AttributeValue.fromS(lab.testType()));
-        addSetClause(updateExpression, expressionAttributeNames, expressionAttributeValues,
-                "#timestamp", ATTR_TIMESTAMP, AttributeValue.fromS(lab.timestamp().toString()));
-        addSetClause(updateExpression, expressionAttributeNames, expressionAttributeValues,
-                "#isCriticalAlert", ATTR_IS_CRITICAL_ALERT, AttributeValue.fromBool(lab.criticalAlert()));
-        addSetClause(updateExpression, expressionAttributeNames, expressionAttributeValues,
-                "#s3Path", ATTR_S3_PATH, AttributeValue.fromS(lab.s3Path()));
-        addSetClause(updateExpression, expressionAttributeNames, expressionAttributeValues,
-                "#version", ATTR_VERSION, AttributeValue.fromN(String.valueOf(newVersion)));
+        try {
+            dynamoDbClient.putItem(requestBuilder.build());
+            // Use String.format for consistent message formatting in logs
+            LOGGER.fine(() -> String.format("Lab %s persisted successfully (version %d -> %d)", lab.labId(), lab.version(), newVersion));
+
+        } catch (ConditionalCheckFailedException e) {
+            LOGGER.log(Level.WARNING, "OCC conflict when saving lab {0} (expected version: {1})",
+                    new Object[]{lab.labId(), lab.version()});
+            metrics.logOccConflict();
+            throw new OptimisticLockException(
+                     lab.labId(),
+                     lab.version(),
+                     String.format("Optimistic concurrency conflict: the laboratory '%s' was modified by another process. "
+                             + "Expected version: %d. Please retry the operation with updated data.",
+                             lab.labId(), lab.version()),
+                     e);
+
+        } catch (ProvisionedThroughputExceededException e) {
+            LOGGER.log(Level.SEVERE, "DynamoDB capacity exceeded when saving lab {0}", lab.labId());
+            throw new DatabaseThrottledException(
+                    "DynamoDB read/write capacity exceeded. "
+                            + "Consider enabling Auto Scaling or increasing WCU.",
+                    e);
+        }
+    }
+
+    private Map<String, AttributeValue> toItemMap(LabResult lab, long versionToPersist) {
+        Map<String, AttributeValue> item = new HashMap<>();
+        item.put(ATTR_PK, AttributeValue.fromS(lab.patientId().toDynamoPartitionKey()));
+        item.put(ATTR_SK, AttributeValue.fromS(SK_LAB_PREFIX + lab.labId()));
+        item.put(ATTR_TEST_TYPE, AttributeValue.fromS(lab.testType()));
+        item.put(ATTR_TIMESTAMP, AttributeValue.fromS(lab.timestamp().toString()));
+        item.put(ATTR_IS_CRITICAL_ALERT, AttributeValue.fromBool(lab.criticalAlert()));
+        item.put(ATTR_S3_PATH, AttributeValue.fromS(lab.s3Path()));
+        item.put(ATTR_VERSION, AttributeValue.fromN(String.valueOf(versionToPersist)));
+        item.put(ATTR_VISIBILITY_STATUS, AttributeValue.fromS(lab.visibilityStatus().name()));
 
         // Analytic values (Map)
         Map<String, AttributeValue> analyticsMap = new HashMap<>();
         lab.analyticValues().forEach((k, v) -> analyticsMap.put(k, AttributeValue.fromS(v)));
-        addSetClause(updateExpression, expressionAttributeNames, expressionAttributeValues,
-                "#analyticValues", ATTR_ANALYTIC_VALUES, AttributeValue.fromM(analyticsMap));
+        item.put(ATTR_ANALYTIC_VALUES, AttributeValue.fromM(analyticsMap));
 
         // Clinical summary (optional)
         if (lab.clinicalSummary() != null) {
-            addSetClause(updateExpression, expressionAttributeNames, expressionAttributeValues,
-                    "#clinicalSummary", ATTR_CLINICAL_SUMMARY, AttributeValue.fromS(lab.clinicalSummary()));
+            item.put(ATTR_CLINICAL_SUMMARY, AttributeValue.fromS(lab.clinicalSummary()));
         }
-
-        // Visibility status (always present, default PENDING)
-        addSetClause(updateExpression, expressionAttributeNames, expressionAttributeValues,
-                "#visibilityStatus", ATTR_VISIBILITY_STATUS, AttributeValue.fromS(lab.visibilityStatus().name()));
 
         // Sent notifications (list, may be empty)
         if (!lab.notifications().isEmpty()) {
@@ -163,77 +188,10 @@ public class DynamoDbPersistenceAdapter implements LabPersistencePort {
                         }
                         return AttributeValue.fromM(nMap);
                     }).toList();
-            addSetClause(updateExpression, expressionAttributeNames, expressionAttributeValues,
-                    "#notifications", ATTR_SENT_NOTIFICATIONS, AttributeValue.fromL(notificationsList));
+            item.put(ATTR_SENT_NOTIFICATIONS, AttributeValue.fromL(notificationsList));
         }
 
-        // Remove trailing comma if present
-        if (updateExpression.length() > 0 && updateExpression.charAt(updateExpression.length() - 1) == ',') {
-            updateExpression.setLength(updateExpression.length() - 2);
-        }
-
-
-        UpdateItemRequest.Builder requestBuilder = UpdateItemRequest.builder()
-                .tableName(tableName)
-                .key(key)
-                .updateExpression(updateExpression.toString())
-                .expressionAttributeNames(expressionAttributeNames)
-                .expressionAttributeValues(expressionAttributeValues);
-
-        // ── Control de Concurrencia Optimista (OCC) ──
-        if (lab.version() == 0) {
-            // New item: must not exist previously
-            requestBuilder.conditionExpression(
-                    "attribute_not_exists(#pk) AND attribute_not_exists(#sk)");
-            expressionAttributeNames.put("#pk", ATTR_PK);
-            expressionAttributeNames.put("#sk", ATTR_SK);
-        } else {
-            // Update: check if DB version matches
-            requestBuilder
-                    .conditionExpression("#version = :expectedVersion")
-                    .expressionAttributeValues(Map.of(
-                            ":expectedVersion", AttributeValue.fromN(String.valueOf(lab.version()))
-                    ));
-            expressionAttributeNames.put("#version", ATTR_VERSION);
-        }
-
-        try {
-            dynamoDbClient.updateItem(requestBuilder.build());
-            // Use String.format for consistent message formatting in logs
-            LOGGER.fine(() -> String.format("Lab %s persisted successfully (version %d -> %d)", lab.labId(), lab.version(), newVersion));
-
-        } catch (ConditionalCheckFailedException e) {
-            LOGGER.log(Level.WARNING, "OCC conflict when saving lab {0} (expected version: {1})",
-                    new Object[]{lab.labId(), lab.version()});
-            metrics.logOccConflict();
-            throw new OptimisticLockException(
-                    lab.labId(),
-                    lab.version(),
-                    String.format("Optimistic concurrency conflict: the laboratory '%s' was modified by another process. "
-                            + "Expected version: %d. Please retry the operation with updated data.",
-                            lab.labId(), lab.version()),
-                    e);
-
-        } catch (ProvisionedThroughputExceededException e) {
-            LOGGER.log(Level.SEVERE, "DynamoDB capacity exceeded when saving lab {0}", lab.labId());
-            throw new DatabaseThrottledException(
-                    "DynamoDB read/write capacity exceeded. "
-                            + "Consider enabling Auto Scaling or increasing WCU.",
-                    e);
-        }
-    }
-
-    /** Helper to add SET clause to the update expression. */
-    private void addSetClause(StringBuilder updateExpression,
-                              Map<String, String> expressionAttributeNames,
-                              Map<String, AttributeValue> expressionAttributeValues,
-                              String attrNameAlias, String attrName, AttributeValue value) {
-        expressionAttributeNames.put(attrNameAlias, attrName);
-        // We use a placeholder replacement to ensure attribute value aliases are unique across sets
-        String singleLetterPlaceholder = "^"; 
-        String valueAliasKey = ":val" + UUID.randomUUID().toString().substring(0, 4); // Ensure uniqueness
-        expressionAttributeValues.put(valueAliasKey, value);
-        updateExpression.append(attrNameAlias).append(" = :").append(valueAliasKey).append(", ");
+        return item;
     }
 
     // ─── findLatestByPatient ────────────────────────────────────────
@@ -268,45 +226,16 @@ public class DynamoDbPersistenceAdapter implements LabPersistencePort {
         }
     }
 
-    // ─── Map Domain → DynamoDB ────────────────────────────────────────
-    /**
-     * Converts a {@link LabResult} to a DynamoDB attribute map.
-     * Does not include Version (added externally for OCC).
-     */
-    private Map<String, AttributeValue> toItemMap(LabResult lab) {
-        Map<String, AttributeValue> item = new HashMap<>();
-
-        item.put(ATTR_PK, AttributeValue.fromS(lab.patientId().toDynamoPartitionKey()));
-        item.put(ATTR_SK, AttributeValue.fromS(SK_LAB_PREFIX + lab.labId()));
-        item.put(ATTR_TEST_TYPE, AttributeValue.fromS(lab.testType()));
-        item.put(ATTR_TIMESTAMP, AttributeValue.fromS(lab.timestamp().toString()));
-        item.put(ATTR_IS_CRITICAL_ALERT, AttributeValue.fromBool(lab.criticalAlert()));
-        item.put(ATTR_S3_PATH, AttributeValue.fromS(lab.s3Path()));
-
-        // Analytic values like Map<String, String> → Map<String, AttributeValue(S)>
-        Map<String, AttributeValue> analyticsMap = new HashMap<>();
-        lab.analyticValues().forEach((key, value) ->
-                analyticsMap.put(key, AttributeValue.fromS(value)));
-        item.put(ATTR_ANALYTIC_VALUES, AttributeValue.fromM(analyticsMap));
-
-        // Clinical summary is optional (might not be generated yet)
-        if (lab.clinicalSummary() != null) {
-            item.put(ATTR_CLINICAL_SUMMARY, AttributeValue.fromS(lab.clinicalSummary()));
-        }
-
-        return item;
-    }
-
     // ─── Map DynamoDB → Domain ─────────────────────────────────────────
     /**
      * Reconstructs a {@link LabResult} from a DynamoDB item map.
      */
     private LabResult fromItemMap(Map<String, AttributeValue> item) {
         String pk = item.get(ATTR_PK).s();
-        String patientIdValue = pk.replace("PATIENT#", "");
+        String patientIdValue = pk.substring("PATIENT#".length());
 
         String sk = item.get(ATTR_SK).s();
-        String labId = sk.replace(SK_LAB_PREFIX, "");
+        String labId = sk.substring(SK_LAB_PREFIX.length());
 
         // Rebuild analytic values
         Map<String, String> analyticValues = new HashMap<>();
@@ -370,34 +299,40 @@ public class DynamoDbPersistenceAdapter implements LabPersistencePort {
     public Optional<PatientTimeline> findCompleteRecord(PatientId patientId) {
         Objects.requireNonNull(patientId, "PatientId cannot be null");
 
-        QueryRequest request = QueryRequest.builder()
-                .tableName(tableName)
-                .keyConditionExpression("%s = :pk".formatted(ATTR_PK))
-                .expressionAttributeValues(Map.of(
-                        ":pk", AttributeValue.fromS(patientId.toDynamoPartitionKey())
-                ))
-                .build();
-
         try {
-            QueryResponse response = dynamoDbClient.query(request);
-
             String name = null;
             Instant birthDate = null;
             String clinicalHistory = null;
             List<LabResult> labResults = new ArrayList<>();
 
-            for (Map<String, AttributeValue> item : response.items()) {
-                String sk = item.get(ATTR_SK).s();
-                if ("METADATA".equals(sk)) {
-                    // Patient metadata item
-                    if (item.containsKey("Name")) name = item.get("Name").s();
-                    if (item.containsKey("DateOfBirth")) birthDate = Instant.parse(item.get("DateOfBirth").s());
-                    if (item.containsKey("ClinicalHistory")) clinicalHistory = item.get("ClinicalHistory").s();
-                } else if (sk.startsWith(SK_LAB_PREFIX)) {
-                    // Laboratory item
-                    labResults.add(fromItemMap(item));
+            Map<String, AttributeValue> lastEvaluatedKey = null;
+            do {
+                QueryRequest.Builder requestBuilder = QueryRequest.builder()
+                        .tableName(tableName)
+                        .keyConditionExpression("%s = :pk".formatted(ATTR_PK))
+                        .expressionAttributeValues(Map.of(
+                                ":pk", AttributeValue.fromS(patientId.toDynamoPartitionKey())
+                        ));
+                if (lastEvaluatedKey != null && !lastEvaluatedKey.isEmpty()) {
+                    requestBuilder.exclusiveStartKey(lastEvaluatedKey);
                 }
-            }
+
+                QueryResponse response = dynamoDbClient.query(requestBuilder.build());
+
+                for (Map<String, AttributeValue> item : response.items()) {
+                    String sk = item.get(ATTR_SK).s();
+                    if ("METADATA".equals(sk)) {
+                        // Patient metadata item
+                        if (item.containsKey("Name")) name = item.get("Name").s();
+                        if (item.containsKey("DateOfBirth")) birthDate = Instant.parse(item.get("DateOfBirth").s());
+                        if (item.containsKey("ClinicalHistory")) clinicalHistory = item.get("ClinicalHistory").s();
+                    } else if (sk.startsWith(SK_LAB_PREFIX)) {
+                        // Laboratory item
+                        labResults.add(fromItemMap(item));
+                    }
+                }
+                lastEvaluatedKey = response.lastEvaluatedKey();
+            } while (lastEvaluatedKey != null && !lastEvaluatedKey.isEmpty());
 
             if (name == null && labResults.isEmpty()) {
                 return Optional.empty();
@@ -480,56 +415,75 @@ public class DynamoDbPersistenceAdapter implements LabPersistencePort {
     @Override
     public void registerNotification(PatientId patientId, String labId,
                                        SentNotification notification,
-                                       VisibilityStatus newStatusPlaceholder, long expectedVersion) {
+                                       VisibilityStatus newStatus, long expectedVersion) {
         Objects.requireNonNull(patientId, "PatientId cannot be null");
         Objects.requireNonNull(labId, "labId cannot be null");
         Objects.requireNonNull(notification, "notification cannot be null");
+        Objects.requireNonNull(newStatus, "newStatus cannot be null");
 
-        // 1. Read current lab record via dedicated method to get existing notifications and version
-        Optional<LabResult> currentLabOpt = findLatestByPatient(patientId)
-                .filter(lab -> lab.labId().equals(labId));
+        Map<String, AttributeValue> key = Map.of(
+                ATTR_PK, AttributeValue.fromS(patientId.toDynamoPartitionKey()),
+                ATTR_SK, AttributeValue.fromS(SK_LAB_PREFIX + labId)
+        );
 
-        if (currentLabOpt.isEmpty()) {
-            throw new LabValidationException("Laboratory not found: " + labId);
+        Map<String, AttributeValue> expressionAttributeValues = new HashMap<>();
+        Map<String, String> expressionAttributeNames = new HashMap<>();
+
+        Map<String, AttributeValue> nMap = new HashMap<>();
+        nMap.put("NotificationId", AttributeValue.fromS(notification.notificationId()));
+        nMap.put("Recipient", AttributeValue.fromS(notification.recipient()));
+        nMap.put("Channel", AttributeValue.fromS(notification.channel().name()));
+        nMap.put("Status", AttributeValue.fromS(notification.status().name()));
+        nMap.put("TimestampSend", AttributeValue.fromS(notification.timestampSend().toString()));
+        if (notification.timestampRead() != null) {
+            nMap.put("TimestampRead", AttributeValue.fromS(notification.timestampRead().toString()));
         }
 
-        LabResult currentLab = currentLabOpt.get();
+        expressionAttributeValues.put(":new_notification", AttributeValue.fromL(List.of(AttributeValue.fromM(nMap))));
+        expressionAttributeValues.put(":empty_list", AttributeValue.fromL(List.of()));
+        expressionAttributeValues.put(":status", AttributeValue.fromS(newStatus.name()));
+        expressionAttributeValues.put(":version", AttributeValue.fromN(String.valueOf(expectedVersion + 1)));
+        expressionAttributeValues.put(":expectedVersion", AttributeValue.fromN(String.valueOf(expectedVersion)));
 
-        // 2. Validate version consistency
-        if (currentLab.version() != expectedVersion) {
+        expressionAttributeNames.put("#notifications", ATTR_SENT_NOTIFICATIONS);
+        expressionAttributeNames.put("#visibilityStatus", ATTR_VISIBILITY_STATUS);
+        expressionAttributeNames.put("#version", ATTR_VERSION);
+
+        String updateExpression = "SET #notifications = list_append(if_not_exists(#notifications, :empty_list), :new_notification), "
+                + "#visibilityStatus = :status, "
+                + "#version = :version";
+
+        UpdateItemRequest request = UpdateItemRequest.builder()
+                .tableName(tableName)
+                .key(key)
+                .updateExpression(updateExpression)
+                .expressionAttributeNames(expressionAttributeNames)
+                .expressionAttributeValues(expressionAttributeValues)
+                .conditionExpression("#version = :expectedVersion")
+                .build();
+
+        try {
+            dynamoDbClient.updateItem(request);
+            LOGGER.fine(() -> String.format("Notification registered for lab %s (version %d -> %d)",
+                    labId, expectedVersion, expectedVersion + 1));
+
+        } catch (ConditionalCheckFailedException e) {
+            LOGGER.log(Level.WARNING, "OCC conflict when registering notification for lab {0} (expected version: {1})",
+                    new Object[]{labId, expectedVersion});
+            metrics.logOccConflict();
             throw new OptimisticLockException(
                     labId,
                     expectedVersion,
-                    String.format("Concurrency conflict: expected version %d, actual version %d", 
-                            expectedVersion, currentLab.version()));
+                    String.format("Optimistic concurrency conflict: the laboratory '%s' was modified by another process. "
+                            + "Expected version: %d. Please retry the operation with updated data.",
+                            labId, expectedVersion),
+                    e);
+
+        } catch (ProvisionedThroughputExceededException e) {
+            LOGGER.log(Level.SEVERE, "DynamoDB capacity exceeded when registering notification for lab {0}", labId);
+            throw new DatabaseThrottledException(
+                    "DynamoDB write capacity exceeded while registering notification.",
+                    e);
         }
-
-        // 3. Aggregate and update the notification list
-        List<SentNotification> updatedNotifications = new ArrayList<>(currentLab.notifications());
-        updatedNotifications.add(notification);
-
-        /*
-         * CRITICAL: Since saveLab() increments the version number AND updates other fields,
-         * we MUST construct a new LabResult object with all current state data 
-         * (minus the notifications list) but with the updated notification list.
-         */
-        
-        // Reconstruct a lab result to pass to saveLab(), which handles version incrementation correctly.
-        LabResult newLabState = new LabResult(
-                labId,
-                currentLab.patientId(),
-                currentLab.testType(),
-                new HashMap<>(currentLab.analyticValues()),
-                currentLab.timestamp(),
-                currentLab.criticalAlert(),
-                currentLab.s3Path(),
-                currentLab.clinicalSummary(),
-                expectedVersion, // Pass the existing version to allow saveLab's OCC check to succeed
-                currentLab.visibilityStatus(),
-                updatedNotifications
-        );
-
-        // Call saveLab which handles the full persistence contract (including version increment)
-        saveLab(newLabState);
     }
 }

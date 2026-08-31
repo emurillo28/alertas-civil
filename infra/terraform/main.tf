@@ -23,57 +23,6 @@ provider "aws" {
 # ─── DATA SOURCES ─────────────────────────────────────────────────────────────
 data "aws_caller_identity" "current" {}
 
-# ─── VARIABLES ────────────────────────────────────────────────────────────────
-variable "aws_region" {
-  type     = string
-  default  = "us-east-1"
-}
-
-variable "environment" {
-  type     = string
-  default  = "dev"
-}
-
-variable "lambda_zip_path" {
-  type    = string
-  default = ""
-}
-
-variable "lambda_memory" {
-  type    = number
-  default = 512
-}
-
-variable "lambda_timeout" {
-  type    = number
-  default = 30
-}
-
-variable "dynamodb_table_name" {
-  type    = string
-  default = "hc-alertas"
-}
-
-variable "s3_bucket_prefix" {
-  type    = string
-  default = "hc-alertas"
-}
-
-variable "sqs_ingest_name" {
-  type    = string
-  default = "hc-alertas-ingest-queue"
-}
-
-variable "sqs_dlq_name" {
-  type    = string
-  default = "hc-alertas-ingest-dlq"
-}
-
-variable "log_retention_days" {
-  type    = number
-  default = 30
-}
-
 # ─── DYNAMODB SINGLE-TABLE DESIGN ─────────────────────────────────────────────
 resource "aws_dynamodb_table" "hc_alertas" {
   name         = var.dynamodb_table_name
@@ -336,7 +285,7 @@ resource "aws_lambda_function" "http_lambda" {
       QUARKUS_PROFILE          = var.environment
       APP_DYNAMODB_TABLE_NAME  = aws_dynamodb_table.hc_alertas.name
       AWS_S3_BUCKET_NAME       = aws_s3_bucket.clinical_docs.id
-      app.sqs.notification-queue-url = aws_sqs_queue.notification_queue.url
+      "app.sqs.notification-queue-url" = aws_sqs_queue.notification_queue.url
       # Sin QUARKUS_LAMBDA_HANDLER → Quarkus usa el router HTTP por defecto
     }
   }
@@ -513,7 +462,7 @@ resource "aws_apigatewayv2_integration" "sqs_integration" {
   integration_subtype = "SQS-SendMessage"
   credentials_arn    = aws_iam_role.api_gateway_role.arn
 
-  parameter_mapping = {
+  request_parameters = {
     QueueUrl    = aws_sqs_queue.ingest_queue.url
     MessageBody = "$request.body"
   }
@@ -640,8 +589,12 @@ resource "aws_wafv2_web_acl" "api_acl" {
             name = "user-agent"
           }
         }
-        positional_constraint = "EXACTLY_ONE"
-        search_string         = ""
+        positional_constraint = "EXACTLY"
+        search_string         = "MISSING_USER_AGENT"
+        text_transformation {
+          priority = 0
+          type     = "NONE"
+        }
       }
     }
 
@@ -669,6 +622,10 @@ resource "aws_wafv2_web_acl" "api_acl" {
           body {
             oversize_handling = "CONTINUE"
           }
+        }
+        text_transformation {
+          priority = 0
+          type     = "NONE"
         }
       }
     }

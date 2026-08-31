@@ -5,7 +5,7 @@ import com.hospital.alertas.domain.model.LabResult;
 import com.hospital.alertas.domain.model.PatientId;
 import com.hospital.alertas.domain.model.VisibilityStatus;
 import io.quarkus.test.common.QuarkusTestResource;
-import io.quarkus.test.junit.QuarkusIntegrationTest;
+import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.*;
 
@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * <p>Run with: {@code mvn verify -DskipUnitTests}
  */
-@QuarkusIntegrationTest
+@QuarkusTest
 @QuarkusTestResource(LocalStackTestResource.class)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class DynamoDbPersistenceIntegrationTest {
@@ -32,7 +32,7 @@ class DynamoDbPersistenceIntegrationTest {
     @Inject
     LabPersistencePort persistencePort;
 
-    private static final PatientId TEST_PATIENT = new PatientId("INTEGRATION-TEST-PATIENT");
+    private static final PatientId TEST_PATIENT = new PatientId("INTEGRATIONTESTPATIENT");
     private static final String TEST_TYPE = "Integration Test Panel";
 
     @BeforeEach
