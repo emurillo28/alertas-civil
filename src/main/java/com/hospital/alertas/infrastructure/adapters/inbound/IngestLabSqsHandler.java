@@ -90,7 +90,7 @@ public class IngestLabSqsHandler implements RequestHandler<SQSEvent, Void> {
                 metrics.logSuccess(duration);
                 LOG.fine(() -> "Mensaje SQS " + message.getMessageId() + " (Lab " + lab.labId() + ") procesado con éxito.");
 
-            } catch (LabValidationException e) {
+            } catch (LabValidationException | IllegalArgumentException e) {
                 // Fail Fast para datos clínicos inválidos (Error del cliente)
                 metrics.logValidationError();
                 LOG.log(Level.WARNING, "Error de validación clínica en mensaje SQS " + message.getMessageId() + ": " + e.getMessage());

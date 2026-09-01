@@ -4,8 +4,16 @@ import io.quarkus.test.common.QuarkusTestResourceLifecycleManager;
 import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.utility.DockerImageName;
 
+import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.*;
+import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.model.CreateQueueRequest;
 
 /**
  * Quarkus Test Resource that manages a LocalStack container for integration tests.
@@ -42,6 +50,40 @@ public class LocalStackTestResource implements QuarkusTestResourceLifecycleManag
         System.out.println("Region: " + region);
         System.out.println("Services: dynamodb, s3, sqs");
 
+        // Initialize DynamoDB table
+        try (DynamoDbClient ddb = DynamoDbClient.builder()
+                .endpointOverride(URI.create(endpoint))
+                .region(Region.of(region))
+                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test-key", "test-secret")))
+                .build()) {
+            ddb.createTable(CreateTableRequest.builder()
+                    .tableName("hc-alertas-test")
+                    .keySchema(
+                            KeySchemaElement.builder().attributeName("PK").keyType(KeyType.HASH).build(),
+                            KeySchemaElement.builder().attributeName("SK").keyType(KeyType.RANGE).build()
+                    )
+                    .attributeDefinitions(
+                            AttributeDefinition.builder().attributeName("PK").attributeType(ScalarAttributeType.S).build(),
+                            AttributeDefinition.builder().attributeName("SK").attributeType(ScalarAttributeType.S).build()
+                    )
+                    .billingMode(BillingMode.PAY_PER_REQUEST)
+                    .build());
+        } catch (Exception e) {
+            System.err.println("Could not initialize test DynamoDB table: " + e.getMessage());
+        }
+
+        // Initialize SQS queues
+        try (SqsClient sqs = SqsClient.builder()
+                .endpointOverride(URI.create(endpoint))
+                .region(Region.of(region))
+                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test-key", "test-secret")))
+                .build()) {
+            sqs.createQueue(CreateQueueRequest.builder().queueName("notification-queue").build());
+            sqs.createQueue(CreateQueueRequest.builder().queueName("test-queue").build());
+        } catch (Exception e) {
+            System.err.println("Could not initialize test SQS queues: " + e.getMessage());
+        }
+
         Map<String, String> config = new HashMap<>();
         config.put("quarkus.dynamodb.endpoint-override", endpoint);
         config.put("quarkus.s3.endpoint-override", endpoint);
@@ -51,7 +93,24 @@ public class LocalStackTestResource implements QuarkusTestResourceLifecycleManag
         config.put("quarkus.sqs.aws.region", region);
         config.put("app.dynamodb.table-name", "hc-alertas-test");
         config.put("app.sqs.notification-queue-url", endpoint + "/000000000000/notification-queue");
-        config.put("quarkus.aws.credentials.provider", "static");
+
+        // DynamoDB Client Credentials
+        config.put("quarkus.dynamodb.aws.credentials.type", "static");
+        config.put("quarkus.dynamodb.aws.credentials.static-provider.access-key-id", "test-key");
+        config.put("quarkus.dynamodb.aws.credentials.static-provider.secret-access-key", "test-secret");
+
+        // S3 Client Credentials
+        config.put("quarkus.s3.aws.credentials.type", "static");
+        config.put("quarkus.s3.aws.credentials.static-provider.access-key-id", "test-key");
+        config.put("quarkus.s3.aws.credentials.static-provider.secret-access-key", "test-secret");
+
+        // SQS Client Credentials
+        config.put("quarkus.sqs.aws.credentials.type", "static");
+        config.put("quarkus.sqs.aws.credentials.static-provider.access-key-id", "test-key");
+        config.put("quarkus.sqs.aws.credentials.static-provider.secret-access-key", "test-secret");
+
+        // Global fallback
+        config.put("quarkus.aws.credentials.type", "static");
         config.put("quarkus.aws.credentials.static-provider.access-key-id", "test-key");
         config.put("quarkus.aws.credentials.static-provider.secret-access-key", "test-secret");
         return config;

@@ -108,8 +108,7 @@ public class DynamoDbPersistenceAdapter implements LabPersistencePort {
     public void saveLab(LabResult lab) {
         Objects.requireNonNull(lab, "LabResult cannot be null");
 
-        long newVersion = lab.version() + 1;
-        Map<String, AttributeValue> item = toItemMap(lab, newVersion);
+        Map<String, AttributeValue> item = toItemMap(lab, lab.version());
 
         PutItemRequest.Builder requestBuilder = PutItemRequest.builder()
                 .tableName(tableName)
@@ -120,16 +119,17 @@ public class DynamoDbPersistenceAdapter implements LabPersistencePort {
             // New item: must not exist previously
             requestBuilder.conditionExpression("attribute_not_exists(" + ATTR_PK + ") AND attribute_not_exists(" + ATTR_SK + ")");
         } else {
-            // Update: check if DB version matches
+            // Update: check if DB version matches previous version
+            long expectedPreviousVersion = lab.version() - 1;
             requestBuilder.conditionExpression("#version = :expectedVersion")
                     .expressionAttributeNames(Map.of("#version", ATTR_VERSION))
-                    .expressionAttributeValues(Map.of(":expectedVersion", AttributeValue.fromN(String.valueOf(lab.version()))));
+                    .expressionAttributeValues(Map.of(":expectedVersion", AttributeValue.fromN(String.valueOf(expectedPreviousVersion))));
         }
 
         try {
             dynamoDbClient.putItem(requestBuilder.build());
             // Use String.format for consistent message formatting in logs
-            LOGGER.fine(() -> String.format("Lab %s persisted successfully (version %d -> %d)", lab.labId(), lab.version(), newVersion));
+            LOGGER.fine(() -> String.format("Lab %s persisted successfully (version %d)", lab.labId(), lab.version()));
 
         } catch (ConditionalCheckFailedException e) {
             LOGGER.log(Level.WARNING, "OCC conflict when saving lab {0} (expected version: {1})",

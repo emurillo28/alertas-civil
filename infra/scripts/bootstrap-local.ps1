@@ -93,10 +93,10 @@ if ($ingestExists) {
     Write-Host "La cola de ingesta '$INGEST_QUEUE' ya existe. Omitiendo..." -ForegroundColor Gray
 } else {
     $dlqArn = "arn:aws:sqs:$REGION:000000000000:$DLQ_QUEUE"
-    $redrivePolicy = '{"deadLetterTargetArn":"' + $dlqArn + '","maxReceiveCount":4}'
+    $attributesJson = "{\`"VisibilityTimeout\`":\`"60\`",\`"RedrivePolicy\`":\`"{\\\`"deadLetterTargetArn\\\`":\\\"$dlqArn\\\",\\\"maxReceiveCount\\\":4}\`"}"
     aws --endpoint-url="$ENDPOINT" sqs create-queue `
       --queue-name "$INGEST_QUEUE" `
-      --attributes '{"VisibilityTimeout":"60","RedrivePolicy":' + "'" + $redrivePolicy + "'" + '}' `
+      --attributes "$attributesJson" `
       --region "$REGION" | Out-Null
     Write-Host "Cola de ingesta '$INGEST_QUEUE' (con DLQ vinculada) creada exitosamente." -ForegroundColor Green
 }

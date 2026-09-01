@@ -62,9 +62,10 @@ if aws --endpoint-url="$ENDPOINT" sqs get-queue-url --queue-name "$INGEST_QUEUE"
   echo "La cola de ingesta '$INGEST_QUEUE' ya existe. Omitiendo..."
 else
   DLQ_ARN="arn:aws:sqs:$REGION:000000000000:$DLQ_QUEUE"
+  ATTRIBUTES_JSON="{\"VisibilityTimeout\":\"60\",\"RedrivePolicy\":\"{\\\"deadLetterTargetArn\\\":\\\"$DLQ_ARN\\\",\\\"maxReceiveCount\\\":4}\"}"
   aws --endpoint-url="$ENDPOINT" sqs create-queue \
     --queue-name "$INGEST_QUEUE" \
-    --attributes "VisibilityTimeout=60,RedrivePolicy={\"deadLetterTargetArn\":\"$DLQ_ARN\",\"maxReceiveCount\":4}" \
+    --attributes "$ATTRIBUTES_JSON" \
     --region "$REGION" > /dev/null
   echo "Cola de ingesta '$INGEST_QUEUE' (con DLQ vinculada) creada exitosamente."
 fi
