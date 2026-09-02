@@ -102,6 +102,14 @@ public class InMemoryLabPersistence implements LabPersistencePort {
         throw new NoSuchElementException("Lab not found: " + labId);
     }
 
+    @Override
+    public List<PatientId> findAllPatientIds() {
+        return store.keySet().stream()
+                .sorted()
+                .map(PatientId::new)
+                .toList();
+    }
+
     // ─── Métodos de inspección para tests ───────────────────────────────
 
     /**

@@ -70,7 +70,7 @@ public class NotifyLabReadyService implements NotifyLabReadyUseCase {
                 command.labId(),
                 notification,
                 VisibilityStatus.NOTIFIED,
-                nextVersion
+                lab.version()
         );
 
         // 4. Enqueue for delivery

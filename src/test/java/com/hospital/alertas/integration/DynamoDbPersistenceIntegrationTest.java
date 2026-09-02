@@ -190,4 +190,16 @@ class DynamoDbPersistenceIntegrationTest {
         assertEquals(com.hospital.alertas.domain.model.NotificationChannel.SMS,
                      retrieved.notifications().get(0).channel());
     }
+
+    @Test
+    @Order(6)
+    @DisplayName("Should retrieve all unique patient IDs from persistence")
+    void shouldFindAllPatientIds() {
+        // When
+        List<PatientId> patientIds = persistencePort.findAllPatientIds();
+
+        // Then
+        assertNotNull(patientIds);
+        assertTrue(patientIds.contains(TEST_PATIENT));
+    }
 }

@@ -100,11 +100,18 @@ public interface LabPersistencePort {
      * @param labId           laboratory identifier
      * @param notification    notification to register
      * @param newStatus       new visibility status (usually NOTIFIED)
-     * @param expectedVersion expected version for OCC
      * @throws OptimisticLockException if version doesn't match
      * @throws DatabaseThrottledException if write capacity is exceeded
      */
     void registerNotification(PatientId patientId, String labId,
                                SentNotification notification,
                                VisibilityStatus newStatus, long expectedVersion);
+
+    /**
+     * Retrieves all unique patient identifiers present in the persistence store.
+     *
+     * @return list of unique {@link PatientId} instances
+     * @throws DatabaseThrottledException if read capacity is exceeded
+     */
+    java.util.List<PatientId> findAllPatientIds();
 }

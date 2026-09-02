@@ -42,20 +42,16 @@ public class LabResultResource {
     }
 
     /**
-     * Patient directory stub endpoint.
+     * Patient directory endpoint.
      *
-     * <p>Returns seeded identifiers for local development so the frontend can test read-side
-     * routing through API Gateway without depending on a separate Patient service.
-     * Production should replace this with an injected patient lookup port behind the same gateway auth.
+     * <p>Returns list of unique patient identifiers registered in persistence.
      */
     @GET
     @Path("/patients")
-    public java.util.List<PatientId> getPatients() {
-        return java.util.List.of(
-                new PatientId("P102"),
-                new PatientId("P103"),
-                new PatientId("P104")
-        );
+    public java.util.List<String> getPatients() {
+        return labPersistencePort.findAllPatientIds().stream()
+                .map(PatientId::value)
+                .toList();
     }
 
     // ─── Read Endpoints ──────────────────────────────────────────────────────
@@ -123,7 +119,7 @@ public class LabResultResource {
      * HTTP 400 when the request body is invalid.
      */
     @POST
-    @Path("/labs/{labId}/notify")
+    @Path("/{labId}/notify")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     public Response notifyLabReady(

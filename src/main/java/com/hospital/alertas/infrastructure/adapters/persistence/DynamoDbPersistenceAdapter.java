@@ -22,6 +22,8 @@ import software.amazon.awssdk.services.dynamodb.model.ProvisionedThroughputExcee
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
+import software.amazon.awssdk.services.dynamodb.model.ScanResponse;
 import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
 
 import java.time.Instant;
@@ -484,6 +486,33 @@ public class DynamoDbPersistenceAdapter implements LabPersistencePort {
             throw new DatabaseThrottledException(
                     "DynamoDB write capacity exceeded while registering notification.",
                     e);
+        }
+    }
+
+    // ─── findAllPatientIds ───────────────────────────────────────────
+    @Override
+    public List<PatientId> findAllPatientIds() {
+        try {
+            ScanRequest scanRequest = ScanRequest.builder()
+                    .tableName(tableName)
+                    .projectionExpression(ATTR_PK)
+                    .build();
+
+            ScanResponse response = dynamoDbClient.scan(scanRequest);
+            return response.items().stream()
+                    .map(item -> item.get(ATTR_PK))
+                    .filter(Objects::nonNull)
+                    .map(AttributeValue::s)
+                    .filter(pk -> pk != null && pk.startsWith("PATIENT#"))
+                    .map(pk -> pk.substring("PATIENT#".length()))
+                    .distinct()
+                    .sorted()
+                    .map(PatientId::new)
+                    .toList();
+        } catch (ProvisionedThroughputExceededException e) {
+            LOGGER.log(Level.SEVERE, "DynamoDB capacity exceeded scanning patient directory");
+            throw new DatabaseThrottledException(
+                    "DynamoDB read capacity exceeded while scanning patients.", e);
         }
     }
 }
