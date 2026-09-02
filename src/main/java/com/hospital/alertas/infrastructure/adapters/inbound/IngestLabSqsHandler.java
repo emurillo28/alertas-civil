@@ -6,6 +6,7 @@ import com.amazonaws.services.lambda.runtime.events.SQSEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hospital.alertas.application.ports.inbound.IngestLabUseCase;
 import com.hospital.alertas.domain.exception.LabValidationException;
+import com.hospital.alertas.domain.exception.OptimisticLockException;
 import com.hospital.alertas.domain.model.LabResult;
 import com.hospital.alertas.infrastructure.config.CloudWatchEmfMetrics;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -95,6 +96,13 @@ public class IngestLabSqsHandler implements RequestHandler<SQSEvent, Void> {
                 metrics.logValidationError();
                 LOG.log(Level.WARNING, "Error de validación clínica en mensaje SQS " + message.getMessageId() + ": " + e.getMessage());
                 // Absorber para eliminar de la cola de ingesta
+
+            } catch (OptimisticLockException e) {
+                // Idempotencia: El laboratorio ya fue persistido previamente (duplicado en SQS)
+                metrics.logIdempotentDuplicateAbsorbed();
+                LOG.log(Level.INFO, "Duplicado idempotente detectado y absorbido para mensaje SQS {0} (Lab {1}): {2}",
+                        new Object[]{message.getMessageId(), e.getEntityId(), e.getMessage()});
+                // Absorber para confirmar ACK a SQS y evitar bucle de reintentos hacia la DLQ
 
             } catch (Exception e) {
                 // Error de infraestructura (Error del sistema)

@@ -118,6 +118,35 @@ class IngestLabSqsHandlerIntegrationTest {
         assertTrue(true); // If we reach here, batch processed successfully
     }
 
+    @Test
+    @Order(4)
+    @DisplayName("Should absorb duplicate SQS message idempotently without routing to DLQ")
+    void shouldAbsorbDuplicateMessageIdempotently() throws Exception {
+        // Given: Identical lab message with fixed labId to simulate SQS redelivery
+        String fixedLabId = "idempotent-lab-" + java.util.UUID.randomUUID();
+        IngestLabRequest request = new IngestLabRequest(
+                fixedLabId,
+                TEST_PATIENT + "DUP",
+                "Idempotency Test",
+                Map.of("Glucosa", "100 mg/dL", "Hemoglobina", "14.0 g/dL"),
+                Instant.now().toString(),
+                false,
+                "s3://test-bucket/idempotent.pdf"
+        );
+
+        String messageBody = objectMapper.writeValueAsString(request);
+        SQSEvent initialEvent = createSqsEvent(messageBody);
+        SQSEvent duplicateEvent = createSqsEvent(messageBody);
+
+        // When: First delivery -> successfully persisted
+        assertDoesNotThrow(() -> handler.handleRequest(initialEvent, new TestLambdaContext()));
+
+        // When: Second delivery (redelivery / at-least-once SQS retry) -> OptimisticLockException caught & absorbed
+        assertDoesNotThrow(() -> handler.handleRequest(duplicateEvent, new TestLambdaContext()));
+
+        // Then: Zero exceptions thrown, duplicate is absorbed gracefully and ACKed to SQS (no DLQ routing)
+    }
+
     // Helper to create SQSEvent (mimics AWS SQSEvent structure)
     private SQSEvent createSqsEvent(String... bodies) {
         var event = new com.amazonaws.services.lambda.runtime.events.SQSEvent();

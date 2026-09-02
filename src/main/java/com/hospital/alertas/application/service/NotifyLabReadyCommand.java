@@ -2,12 +2,11 @@ package com.hospital.alertas.application.service;
 
 import com.hospital.alertas.domain.model.NotificationChannel;
 
-import java.util.Objects;
-
 /**
  * Command to trigger the notification flow for a laboratory result.
  *
- * <p>This is a mutable command object (not a domain record) because it carries
+ * <p>
+ * This is a mutable command object (not a domain record) because it carries
  * transient input from the UI/integration layer before being converted into
  * domain objects.
  */

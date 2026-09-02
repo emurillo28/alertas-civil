@@ -677,6 +677,70 @@ resource "aws_wafv2_web_acl_association" "api_gateway" {
   web_acl_arn  = aws_wafv2_web_acl.api_acl.arn
 }
 
+# ══════════════════════════════════════════════════════════════════════════════
+# CLOUDWATCH ALARMS: OPERATIONAL VISIBILITY (DLQ & LAMBDA FAILURES)
+# ══════════════════════════════════════════════════════════════════════════════
+
+resource "aws_cloudwatch_metric_alarm" "ingest_dlq_alarm" {
+  alarm_name          = "alertas-ingest-dlq-messages-visible-${var.environment}"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_description   = "Critical: Messages are accumulating in the ingest DLQ."
+  dimensions = {
+    QueueName = aws_sqs_queue.dlq_ingest_queue.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "notification_dlq_alarm" {
+  alarm_name          = "alertas-notification-dlq-messages-visible-${var.environment}"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_description   = "Critical: Messages are accumulating in the notification DLQ."
+  dimensions = {
+    QueueName = aws_sqs_queue.notification_dlq_queue.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_error_alarm" {
+  alarm_name          = "alertas-sqs-lambda-execution-errors-${var.environment}"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_description   = "Critical: Unhandled exception spike in alert processing lambda."
+  dimensions = {
+    FunctionName = aws_lambda_function.sqs_lambda.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "http_lambda_error_alarm" {
+  alarm_name          = "alertas-http-lambda-execution-errors-${var.environment}"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_description   = "Critical: Unhandled exception spike in HTTP API lambda."
+  dimensions = {
+    FunctionName = aws_lambda_function.http_lambda.function_name
+  }
+}
+
 # ─── OUTPUTS ──────────────────────────────────────────────────────────────────
 output "api_endpoint" {
   description = "API Gateway endpoint URL"

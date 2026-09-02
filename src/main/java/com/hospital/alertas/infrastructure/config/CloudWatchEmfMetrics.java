@@ -32,34 +32,38 @@ public class CloudWatchEmfMetrics {
     }
 
     public void logSuccess(double durationSeconds) {
-        logEmf(1, 1, 0, 0, 0, 0, durationSeconds);
+        logEmf(1, 1, 0, 0, 0, 0, 0, durationSeconds);
     }
 
     public void logCriticalAlertTriggered() {
-        logEmf(1, 0, 0, 0, 1, 0, 0.0);
+        logEmf(1, 0, 0, 0, 1, 0, 0, 0.0);
     }
 
     public void logValidationError() {
-        logEmf(1, 0, 1, 0, 0, 0, 0.0);
+        logEmf(1, 0, 1, 0, 0, 0, 0, 0.0);
     }
 
     public void logInfrastructureError() {
-        logEmf(1, 0, 0, 1, 0, 0, 0.0);
+        logEmf(1, 0, 0, 1, 0, 0, 0, 0.0);
     }
 
     public void logOccConflict() {
-        logEmf(1, 0, 0, 0, 0, 1, 0.0);
+        logEmf(1, 0, 0, 0, 0, 1, 0, 0.0);
+    }
+
+    public void logIdempotentDuplicateAbsorbed() {
+        logEmf(1, 0, 0, 0, 0, 0, 1, 0.0);
     }
 
     public void logSqsBatchProcessed(int batchSize) {
-        logEmf(batchSize, 0, 0, 0, 0, 0, 0.0);
+        logEmf(batchSize, 0, 0, 0, 0, 0, 0, 0.0);
     }
 
     /**
      * Construye y escribe en stdout la estructura EMF requerida por CloudWatch.
      */
     private void logEmf(long total, long success, long validationErr, long infraErr,
-                        long criticalAlerts, long occConflicts, double duration) {
+                        long criticalAlerts, long occConflicts, long idempotentDuplicates, double duration) {
         String emfJson = "{"
                 + "\"_aws\":{"
                 + "\"Timestamp\":" + Instant.now().toEpochMilli() + ","
@@ -73,6 +77,7 @@ public class CloudWatchEmfMetrics {
                 + "{\"Name\":\"medical_alerts_infrastructure_error_total\",\"Unit\":\"Count\"},"
                 + "{\"Name\":\"medical_alerts_critical_alert_total\",\"Unit\":\"Count\"},"
                 + "{\"Name\":\"medical_alerts_occ_conflict_total\",\"Unit\":\"Count\"},"
+                + "{\"Name\":\"medical_alerts_idempotent_duplicate_total\",\"Unit\":\"Count\"},"
                 + "{\"Name\":\"medical_alerts_processing_duration_seconds\",\"Unit\":\"Seconds\"}"
                 + "]}"
                 + "]"
@@ -84,6 +89,8 @@ public class CloudWatchEmfMetrics {
                 + "\"medical_alerts_infrastructure_error_total\":" + infraErr + ","
                 + "\"medical_alerts_critical_alert_total\":" + criticalAlerts + ","
                 + "\"medical_alerts_occ_conflict_total\":" + occConflicts + ","
+                + "\"medical_alerts_idempotent_duplicate_total\":" + idempotentDuplicates + ","
+                + "\"idempotent_duplicate_absorbed\":" + (idempotentDuplicates > 0 ? 1 : 0) + ","
                 + "\"medical_alerts_processing_duration_seconds\":" + duration
                 + "}";
 
