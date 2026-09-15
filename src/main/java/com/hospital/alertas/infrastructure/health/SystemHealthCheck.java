@@ -2,7 +2,6 @@ package com.hospital.alertas.infrastructure.health;
 
 import com.hospital.alertas.application.ports.outbound.LabPersistencePort;
 import com.hospital.alertas.domain.model.PatientId;
-import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.eclipse.microprofile.health.HealthCheck;
 import org.eclipse.microprofile.health.HealthCheckResponse;
@@ -14,14 +13,17 @@ import java.time.Instant;
 /**
  * Health checks for the Lambda application.
  *
- * <p>Liveness: Basic check that the application is running (always passes if JVM is up).
+ * <p>
+ * Liveness: Basic check that the application is running (always passes if JVM
+ * is up).
  * Readiness: Checks that downstream dependencies (DynamoDB) are reachable.
  *
- * <p>Used by:
+ * <p>
+ * Used by:
  * <ul>
- *   <li>AWS ALB / API Gateway health checks</li>
- *   <li>Kubernetes liveness/readiness probes (if deployed to K8s)</li>
- *   <li>LocalStack Dev Services readiness detection</li>
+ * <li>AWS ALB / API Gateway health checks</li>
+ * <li>Kubernetes liveness/readiness probes (if deployed to K8s)</li>
+ * <li>LocalStack Dev Services readiness detection</li>
  * </ul>
  */
 @Liveness

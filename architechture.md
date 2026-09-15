@@ -35,6 +35,8 @@ Queda **completamente prohibido** el uso de programación reactiva tradicional (
 * **Ejecución:** Los puntos de entrada en la capa de infraestructura se anotan con `@RunOnVirtualThread`. Al realizar I/O de red contra DynamoDB o S3 usando el cliente síncrono estándar, la JVM desmonta automáticamente el hilo virtual del hilo real del procesador (*Carrier Thread*), escalando a millones de peticiones concurrentes con una huella de memoria mínima.
 * **Restricción de Bloqueo (Thread Pinning):** No se permite el uso de la palabra reservada `synchronized` en zonas de I/O crítico ni llamadas a código nativo que bloqueen el hilo transportador. Para exclusión mutua concurrente se debe optar exclusivamente por `ReentrantLock` o estructuras CAS como `ConcurrentHashMap` y `LongAdder`.
 
+nota 9/3/26 me parece qque esto ya no aplica en java 25
+
 ---
 
 ## 4. Diseño de Base de Datos: Single-Table Design (DynamoDB)

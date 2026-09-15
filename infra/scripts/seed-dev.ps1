@@ -1,34 +1,44 @@
 # PowerShell script to seed development data into LocalStack DynamoDB for Windows users.
-$ErrorActionPreference = "Stop"
+# Fix encoding for UTF-8 output in PowerShell console
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+$ErrorActionPreference = "Continue"
 
 $ENDPOINT = "http://localhost:4566"
 $REGION = "us-east-1"
 $TABLE_NAME = "hc-alertas"
 
 $hasAwsCli = [bool](Get-Command aws -ErrorAction SilentlyContinue)
+$TmpFile = [System.IO.Path]::GetTempFileName()
 
 function Invoke-DynamoPut {
     param(
         [string]$ItemJson,
         [string]$ConditionExpression = $null
     )
+    # Write JSON to temp file to avoid AWS CLI comma/special-char parsing issues
+    # UTF8Encoding($false) = UTF-8 without BOM; AWS CLI rejects BOM files
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($TmpFile, $ItemJson, $utf8NoBom)
+    $fileArg = "file://$($TmpFile.Replace('\','/'))"
+
     if ($hasAwsCli) {
-        $escaped = $ItemJson.Replace('"', '\"')
         if ($ConditionExpression) {
             aws --endpoint-url="$ENDPOINT" --region "$REGION" dynamodb put-item `
-                --table-name "$TABLE_NAME" --item "$escaped" --condition-expression "$ConditionExpression" | Out-Null
+                --table-name "$TABLE_NAME" --item "$fileArg" --condition-expression "$ConditionExpression" 2>&1 | Where-Object { $_ -notmatch "^Note:" } | Out-Null
         } else {
             aws --endpoint-url="$ENDPOINT" --region "$REGION" dynamodb put-item `
-                --table-name "$TABLE_NAME" --item "$escaped" | Out-Null
+                --table-name "$TABLE_NAME" --item "$fileArg" 2>&1 | Where-Object { $_ -notmatch "^Note:" } | Out-Null
         }
     } else {
-        $escaped = $ItemJson.Replace('"', '\"')
+        $containerPath = "/tmp/seed-item.json"
+        docker cp $TmpFile "hc-alertas-localstack:$containerPath" | Out-Null
         if ($ConditionExpression) {
             docker exec hc-alertas-localstack awslocal dynamodb put-item `
-                --table-name "$TABLE_NAME" --item "$escaped" --condition-expression "$ConditionExpression" | Out-Null
+                --table-name "$TABLE_NAME" --item "file://$containerPath" --condition-expression "$ConditionExpression" | Out-Null
         } else {
             docker exec hc-alertas-localstack awslocal dynamodb put-item `
-                --table-name "$TABLE_NAME" --item "$escaped" | Out-Null
+                --table-name "$TABLE_NAME" --item "file://$containerPath" | Out-Null
         }
     }
 }
