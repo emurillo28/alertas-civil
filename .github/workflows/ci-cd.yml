@@ -32,15 +32,14 @@ jobs:
           cache: maven
 
       - name: Dependency Vulnerability Scan (OWASP)
-        # No || true — CVSS ≥ 7 hard-fails the gate
-        run: mvn org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=7 -Dformat=HTML -DoutputDirectory=dependency-check-report -DnvdApiKey=${{ secrets.NVD_API_KEY }}
+        run: mvn org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=7 -Dformat=HTML -DnvdApiKey=${{ secrets.NVD_API_KEY }}
 
       - name: Upload Dependency Check Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dependency-check-report
-          path: dependency-check-report/
+          path: target/dependency-check-report.html
           retention-days: 30
 
       - name: SpotBugs Static Analysis
