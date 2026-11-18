@@ -10,44 +10,12 @@ on:
 env:
   JAVA_VERSION: '25'
   QUARKUS_VERSION: '3.36.0'
-  MAVEN_OPTS: '-Dmaven.repo.local=/tmp/maven-repo'
+  # MAVEN_OPTS override removed — so actions/setup-java cache: maven
+  # correctly caches ~/.m2/repository instead of a throwaway /tmp path.
 
 jobs:
-  # ─── 1. Unit Tests (Fast, No External Deps) ─────────────────────────────────
-  unit-tests:
-    name: Unit Tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  # ─── GATE 1 (parallel) ────────────────────────────────────────────────────────
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
-          cache: maven
-
-      - name: Configure Maven Settings
-        run: |
-          echo '<settings><localRepository>/tmp/maven-repo</localRepository></settings>' > ~/.m2/settings.xml
-
-      - name: Run Unit Tests
-        run: mvn test -DskipITs -q
-        env:
-          # Ensure no LOCALSTACK_AUTH_TOKEN leaks into test runtime
-          LOCALSTACK_AUTH_TOKEN: ""
-
-      - name: Upload Coverage (if JaCoCo configured)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: unit-test-report
-          path: target/surefire-reports/
-          retention-days: 7
-
-  # ─── 2. Code Quality & Security ─────────────────────────────────────────────
   code-quality:
     name: Code Quality & Security
     runs-on: ubuntu-latest
@@ -63,20 +31,12 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
 
-      - name: Dependency Vulnerability Scan (OWASP Dependency Check)
-        uses: dependency-check/Dependency-Check_Action@main
-        id: depcheck
-        env:
-          JAVA_HOME: ""
-        with:
-          project: 'alertas-civil'
-          path: '.'
-          format: 'HTML'
-          out: 'dependency-check-report'
-          args: >
-            --failOnCVSS 7 || true
+      - name: Dependency Vulnerability Scan (OWASP)
+        # No || true — CVSS ≥ 7 hard-fails the gate
+        run: mvn org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=7 -Dformat=HTML -DoutputDirectory=dependency-check-report
 
       - name: Upload Dependency Check Report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dependency-check-report
@@ -84,25 +44,46 @@ jobs:
           retention-days: 30
 
       - name: SpotBugs Static Analysis
-        run: mvn com.github.spotbugs:spotbugs-maven-plugin:spotbugs -q
-        continue-on-error: true
+        # No continue-on-error — high-severity bugs block the pipeline
+        run: mvn com.github.spotbugs:spotbugs-maven-plugin:check -q
 
       - name: Checkstyle
+        # No continue-on-error — style violations block the pipeline
         run: mvn checkstyle:check -q
-        continue-on-error: true
 
-  # ─── 3. Integration Tests (with Testcontainers LocalStack) ──────────────────
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+          # ~/.m2/settings.xml override removed — cache: maven manages the repo path
+
+      - name: Run Unit Tests
+        run: mvn test -DskipITs -q
+        env:
+          LOCALSTACK_AUTH_TOKEN: ""
+
+      - name: Upload Test Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: target/surefire-reports/
+          retention-days: 7
+
   integration-tests:
-    name: Integration Tests
+    name: Integration Tests (Testcontainers + LocalStack)
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    services:
-      # Docker is needed for Testcontainers
-      docker:
-        image: docker:dind
-        options: --privileged
-        env:
-          DOCKER_TLS_CERTDIR: ""
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -114,18 +95,11 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
 
-      - name: Start Docker Daemon
-        run: |
-          # Testcontainers needs Docker
-          sudo systemctl start docker
-          docker version
-
       - name: Run Integration Tests
         run: mvn verify -DskipUTs -Dtestcontainers.reuse.enable=false -q
         env:
           DOCKER_HOST: unix:///var/run/docker.sock
           TESTCONTAINERS_RYUK_DISABLED: "true"
-          # Critical: Prevent LOCALSTACK_AUTH_TOKEN from leaking into test runtime
           LOCALSTACK_AUTH_TOKEN: ""
 
       - name: Upload Integration Test Reports
@@ -136,63 +110,26 @@ jobs:
           path: target/failsafe-reports/
           retention-days: 7
 
-  # ─── 4. Native Build (GraalVM) ──────────────────────────────────────────────
-  native-build:
-    name: Native Build (GraalVM)
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    needs: [unit-tests, code-quality]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  # ─── GATE 2 (parallel, both need all 3 Gate 1 jobs) ─────────────────────────
 
-      - name: Setup GraalVM
-        uses: graalvm/setup-graalvm@v4
-        with:
-          version: '23.1.2'
-          java-version: '25'
-          components: 'native-image'
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Maven
-        uses: actions/setup-java@v4
-        with:
-          distribution: graalvm
-          java-version: '25'
-          cache: maven
-
-      - name: Build Native Image
-        run: mvn package -Pnative -DskipTests -q
-        env:
-          QUARKUS_PROFILE: prod
-
-      - name: Verify Native Binary
-        run: |
-          ls -la target/*-runner
-          file target/*-runner
-
-      - name: Upload Native Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-binary
-          path: target/*-runner
-          retention-days: 30
-
-  # ─── 5. Docker Build & Push ─────────────────────────────────────────────────
   docker-build:
     name: Docker Build & Push
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [unit-tests, code-quality]
+    needs: [code-quality, unit-tests, integration-tests]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     permissions:
       contents: read
       packages: write
-      id-token: write
+    outputs:
+      image-tag: ${{ steps.sha.outputs.short }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Compute Short SHA
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -211,46 +148,48 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=ref,event=branch
-            type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
-
       - name: Build & Push Docker Image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          # Immutable SHA tag only — :latest is never pushed
+          tags: ghcr.io/${{ github.repository }}:${{ steps.sha.outputs.short }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ─── 6. Terraform Plan (Infra Preview) ──────────────────────────────────────
   terraform-plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [code-quality]
-    if: github.event_name == 'pull_request'
+    needs: [code-quality, unit-tests, integration-tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
+      id-token: write      # Required for AWS OIDC AssumeRoleWithWebIdentity
       contents: read
       pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Compute Short SHA
+        id: sha
+        # Computed locally — same commit as docker-build, safe to run in parallel
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.x
-          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+          # No cli_config_credentials_token — backend is local state, auth via OIDC
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+          role-session-name: GitHubActionsPlan
 
       - name: Terraform Init
         working-directory: infra/terraform
@@ -269,29 +208,26 @@ jobs:
         working-directory: infra/terraform
         run: terraform plan -input=false -out=tfplan
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: us-east-1
+          # SHA computed locally — no dependency on docker-build job output
+          TF_VAR_image_tag: ${{ steps.sha.outputs.short }}
 
-      - name: Comment PR with Plan
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+      - name: Upload tfplan Artifact
+        uses: actions/upload-artifact@v4
         with:
-          script: |
-            const output = `${{ steps.plan.outputs.stdout }}`;
-            github.rest.issues.createComment({
-              issue_number: ${{ github.event.number }},
-              owner: ${{ github.repository_owner }},
-              repo: ${{ github.event.repository.name }},
-              body: '## Terraform Plan\n```\n' + output + '\n```'
-            });
+          name: tfplan
+          path: infra/terraform/tfplan
+          retention-days: 1
 
-  # ─── 7. Terraform Apply (Production Deploy) ─────────────────────────────────
+  # ─── GATE 3: Manual Approval + Prod Deploy ───────────────────────────────────
+  # The 'production' environment protection rule in GitHub Settings → Environments
+  # enforces the required reviewer approval before this job starts.
+  # Apply consumes the exact saved tfplan — zero drift between plan and apply.
+
   terraform-apply:
     name: Terraform Apply (Prod)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [unit-tests, code-quality, integration-tests, native-build, docker-build]
+    needs: [docker-build, terraform-plan]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment: production
     permissions:
@@ -306,7 +242,7 @@ jobs:
         with:
           terraform_version: 1.9.x
 
-      - name: Configure AWS Credentials
+      - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
@@ -317,14 +253,18 @@ jobs:
         working-directory: infra/terraform
         run: terraform init -input=false
 
-      - name: Terraform Apply
+      - name: Download tfplan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: infra/terraform
+
+      - name: Terraform Apply (saved plan — zero drift)
         working-directory: infra/terraform
-        run: terraform apply -input=false -auto-approve
-        env:
-          TF_VAR_lambda_zip_path: "target/quarkus-app.jar" # or native binary
+        run: terraform apply -input=false tfplan
 
       - name: Notify Deploy Complete
         run: |
           echo "✅ Production deployment complete"
-          echo "Lambda: hc-alertas-backend-prod"
+          echo "Image: ghcr.io/${{ github.repository }}:${{ needs.docker-build.outputs.image-tag }}"
           echo "API: https://$(terraform -chdir=infra/terraform output -raw api_endpoint)"
