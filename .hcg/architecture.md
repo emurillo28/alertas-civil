@@ -4,32 +4,44 @@
 
 ### Stack
 - Java 25, Quarkus 3.36+, GraalVM native, AWS Lambda, DynamoDB
-- Virtual threads (Project Loom) for SQS batch processing
+- Virtual threads (Project Loom) for concurrent blocking I/O
 - Hexagonal architecture: Domain → Application → Infrastructure
 
 ### Architectural Boundaries
 ```
-Domain (records, ports) → Application (use cases) → Infrastructure (adapters)
-Dependencies point INWARD only
+Domain (records, exceptions)
+  ▲
+  │ (implements ports)
+Application (use cases, inbound/outbound ports, services)
+  ▲
+  │ (calls use cases / implements ports)
+Infrastructure (adapters, handlers, resources, DynamoDB, SQS)
 ```
+*Dependencies point strictly INWARD only.*
 
 ### Key Decisions (ADRs)
-- **2025-01-15**: Single-table DynamoDB over relational for Lambda scalability
-- **2025-01-18**: Java 25 + Virtual threads for SQS batch processing concurrency
-- **2025-01-20**: OCC versioning on LabResult to prevent lost updates during concurrent corrections
-- **2025-01-22**: Native image mandatory for Lambda (<50MB, <100ms cold start)
+- **Single-table DynamoDB**: Consolidates demographics, labs, and notifications into `hc-alertas`.
+- **Java 25 + Virtual Threads**: Loom for blocking I/O without reactive frameworks (no Mutiny, Uni, or Multi).
+- **OCC versioning on LabResult**: Mandatory monotonically increasing `version` prevents lost updates.
+- **Synchronous AWS SDK Client**: `DynamoDbClient` deschedules virtual threads cleanly during network calls.
+- **Native image profile**: Sub-50ms cold starts on AWS Lambda.
 
 ### Package Structure
 ```
-com.hcg.alertas
+com.hospital.alertas
 ├── domain
-│   ├── model          # Java records (LabResult, PatientId, NotificacionEnviada)
-│   ├── port           # Interfaces (LabPersistencePort, NotificationPort)
-│   └── enum           # EstadoVisibilidad
+│   ├── model          # Immutable records (LabResult, PatientId, PatientTimeline, SentNotification)
+│   └── exception      # LabValidationException, OptimisticLockException, DatabaseThrottledException
 ├── application
-│   └── usecase        # IngestLabUseCase, NotifyLabReadyUseCase
+│   ├── ports
+│   │   ├── inbound    # IngestLabUseCase, NotifyLabReadyUseCase
+│   │   └── outbound   # LabPersistencePort, NotificationPort
+│   └── service        # IngestLabService, NotifyLabReadyService
 └── infrastructure
-    ├── adapter        # DynamoDbLabAdapter, SnsNotificationAdapter
-    ├── config         # Quarkus, AWS, DynamoDB config
-    └── handler        # SQS Lambda handlers (IngestLabHandler)
+    ├── adapters
+    │   ├── inbound    # IngestLabSqsHandler, LabResultResource, DTOs, LabResultMapper
+    │   ├── outbound   # SqsNotificationAdapter
+    │   └── persistence# DynamoDbPersistenceAdapter (single-table, OCC)
+    ├── config         # CloudWatchEmfMetrics
+    └── health         # SystemHealthCheck
 ```

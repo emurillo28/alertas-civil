@@ -1,40 +1,27 @@
 # HCG Clinical Thresholds (Critical Values)
 
-## Alert Rules
-| Analyte | Critical Low | Critical High | Unit | Action |
-|---------|-------------|---------------|------|--------|
-| Hemoglobin | < 7.0 | > 18.0 | g/dL | Immediate physician notification |
-| Potassium | < 3.0 | > 6.0 | mmol/L | Cardiac monitoring, STAT callback |
-| Glucose | < 50 | > 400 | mg/dL | Insulin/Dextrose protocol activation |
-| Sodium | < 125 | > 155 | mmol/L | Neurology consult, fluid management |
-| Creatinine | — | > 3.0 | mg/dL | Nephrology alert, contrast hold |
-| Platelets | < 50 | > 1000 | ×10³/µL | Hematology consult, transfusion eval |
+Critical alert detection is performed during lab ingestion by evaluating `analyticValues` (key-value strings) against predefined emergency ranges.
 
-## Logic (Pseudocode)
-```java
-public EstadoVisibilidad determineVisibility(LabResult result) {
-    return switch (result.analyteCode()) {
-        case "718-7"  -> checkRange(result.value(), 7.0, 18.0);   // Hemoglobin
-        case "2823-3" -> checkRange(result.value(), 3.0, 6.0);    // Potassium
-        case "2345-7" -> checkRange(result.value(), 50.0, 400.0); // Glucose
-        case "2951-2" -> checkRange(result.value(), 125.0, 155.0); // Sodium
-        case "2160-0" -> checkHigh(result.value(), 3.0);          // Creatinine
-        case "777-3"  -> checkRange(result.value(), 50.0, 1000.0); // Platelets
-        default -> EstadoVisibilidad.VISIBLE;
-    };
-}
+## Critical Alert Thresholds
 
-private EstadoVisibilidad checkRange(Double value, double low, double high) {
-    return (value < low || value > high) ? EstadoVisibilidad.CRITICAL_ALERT : EstadoVisibilidad.VISIBLE;
-}
+| Analyte | Critical Low | Critical High | Unit | Clinical Action |
+|---------|-------------|---------------|------|-----------------|
+| Hemoglobin | < 7.0 | > 20.0 | g/dL | Immediate physician notification |
+| Potassium | < 2.5 | > 6.0 | mmol/L | Cardiac monitoring, STAT callback |
+| Glucose | < 50.0 | > 400.0 | mg/dL | Insulin/Dextrose protocol activation |
+| Sodium | < 120.0 | > 160.0 | mmol/L | Neurology consult, fluid management |
+| Creatinine | — | > 10.0 | mg/dL | Nephrology alert, urgent dialysis evaluation |
+| Platelets | < 50.0 | > 1000.0 | ×10³/µL | Hematology consult, transfusion eval |
 
-private EstadoVisibilidad checkHigh(Double value, double high) {
-    return (value > high) ? EstadoVisibilidad.CRITICAL_ALERT : EstadoVisibilidad.VISIBLE;
-}
-```
+## Parsing & Matching Behavior
 
-## Notification Flow
-1. Lab system → SQS (`LabResultIngest` queue)
-2. Lambda (`IngestLabHandler`) → validates, persists to DynamoDB
-3. If `CRITICAL_ALERT` → `NotifyLabReadyUseCase` triggers SNS/SES
-4. CloudWatch metrics: `CriticalAlertsCount`, `IngestionLatencyMs`
+- **Case-Insensitive Normalization:** Analyte keys are trimmed and converted to lower-case (e.g. `hemoglobina`, `hemoglobin`, `HEMOGLOBIN` all match).
+- **Numeric Extraction:** Leading numeric portion extracted via regex (e.g., `"14.5 g/dL"` → `14.5`).
+- **Critical Flag:** If any single analyte crosses its critical threshold, `criticalAlert` is marked `true` on the `LabResult`.
+- **Unknown Analytes:** Unrecognized analytes log a warning and default to non-critical without rejecting the ingestion batch.
+
+## Ingestion Flow
+1. Laboratory machine / UI → `POST /api/v1/labs` → API Gateway → SQS (`hc-alertas-ingest-queue`).
+2. Lambda (`IngestLabSqsHandler`) processes batch via Virtual Threads.
+3. `IngestLabService` evaluates thresholds and saves to DynamoDB (`hc-alertas`) with OCC.
+4. If `criticalAlert == true`, alert is staged for dispatch (`VisibilityStatus.PENDING`).
