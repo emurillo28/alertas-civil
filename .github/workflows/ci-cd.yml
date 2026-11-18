@@ -2,9 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [main, develop]
+    branches: [master, translated]
   pull_request:
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
 
 env:
@@ -33,7 +33,7 @@ jobs:
 
       - name: Dependency Vulnerability Scan (OWASP)
         # No || true — CVSS ≥ 7 hard-fails the gate
-        run: mvn org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=7 -Dformat=HTML -DoutputDirectory=dependency-check-report
+        run: mvn org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=7 -Dformat=HTML -DoutputDirectory=dependency-check-report -DnvdApiKey=${{ secrets.NVD_API_KEY }}
 
       - name: Upload Dependency Check Report
         if: always()
