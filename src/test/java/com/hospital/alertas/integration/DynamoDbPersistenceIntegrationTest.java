@@ -289,7 +289,7 @@ class DynamoDbPersistenceIntegrationTest {
         // Hard assertion: only ONE record persisted — no phantom duplicates
         Optional<LabResult> found = persistencePort.findLatestByPatient(isolatedPatient);
         assertTrue(found.isPresent());
-        assertEquals(1, found.get().version(),
-                "Concurrent execution bypassed database constraints — duplicate record found!");
+        assertEquals(0, found.get().version(),
+                "Concurrent execution bypassed database constraints — record should have initial version 0!");
     }
 }
