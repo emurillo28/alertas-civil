@@ -1,0 +1,10 @@
+    @GET
+    @Path("/patients")
+    public Response getAllPatients() {
+        // Stub patient data - seeds P102, P103 from domain model for local dev
+        return Response.ok(
+            List.of(new PatientView("P102", "John Martinez", 45),  // diabetic
+                            new PatientView("P103", "Maria Santos", 58))    // hypertensive
+                   )
+                .build();
+    }

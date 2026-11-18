@@ -3,8 +3,12 @@ package com.hospital.alertas.application.service;
 import com.hospital.alertas.application.ports.outbound.LabPersistencePort;
 import com.hospital.alertas.domain.model.LabResult;
 import com.hospital.alertas.domain.model.PatientId;
+import com.hospital.alertas.domain.model.PatientTimeline;
+import com.hospital.alertas.domain.model.SentNotification;
+import com.hospital.alertas.domain.model.VisibilityStatus;
 
 import java.util.*;
+import java.util.Optional;
 
 /**
  * Implementación fake in-memory de {@link LabPersistencePort} para tests unitarios.
@@ -39,6 +43,71 @@ public class InMemoryLabPersistence implements LabPersistencePort {
         }
         // Retorna el último insertado (simula orden por timestamp descendente)
         return Optional.of(labs.getLast());
+    }
+
+    @Override
+    public Optional<PatientTimeline> findCompleteRecord(PatientId patientId) {
+        Objects.requireNonNull(patientId, "PatientId no puede ser nulo");
+        List<LabResult> labs = store.getOrDefault(patientId.value(), List.of());
+        if (labs.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(new PatientTimeline(patientId, null, null, null, labs));
+    }
+
+    @Override
+    public void updateVisibilityStatus(PatientId patientId, String labId,
+                                        VisibilityStatus newStatus, long expectedVersion) {
+        Objects.requireNonNull(patientId, "PatientId no puede ser nulo");
+        Objects.requireNonNull(labId, "labId no puede ser nulo");
+        Objects.requireNonNull(newStatus, "newStatus no puede ser nulo");
+
+        List<LabResult> labs = store.getOrDefault(patientId.value(), List.of());
+        for (int i = 0; i < labs.size(); i++) {
+            LabResult lab = labs.get(i);
+            if (lab.labId().equals(labId)) {
+                if (lab.version() != expectedVersion) {
+                    throw new IllegalStateException("Version mismatch: expected " + expectedVersion + ", found " + lab.version());
+                }
+                LabResult updated = lab.withEstadoVisibilidad(newStatus).withIncrementedVersion();
+                labs.set(i, updated);
+                return;
+            }
+        }
+        throw new NoSuchElementException("Lab not found: " + labId);
+    }
+
+    @Override
+    public void registerNotification(PatientId patientId, String labId,
+                                      SentNotification notification,
+                                      VisibilityStatus newStatus, long expectedVersion) {
+        Objects.requireNonNull(patientId, "PatientId no puede ser nulo");
+        Objects.requireNonNull(labId, "labId no puede ser nulo");
+        Objects.requireNonNull(notification, "notification no puede ser nulo");
+        Objects.requireNonNull(newStatus, "newStatus no puede ser nulo");
+
+        List<LabResult> labs = store.getOrDefault(patientId.value(), List.of());
+        for (int i = 0; i < labs.size(); i++) {
+            LabResult lab = labs.get(i);
+            if (lab.labId().equals(labId)) {
+                if (lab.version() != expectedVersion) {
+                    throw new IllegalStateException("Version mismatch: expected " + expectedVersion + ", found " + lab.version());
+                }
+                LabResult withNotification = lab.withNotificacionAgregada(notification);
+                LabResult updated = withNotification.withEstadoVisibilidad(newStatus).withIncrementedVersion();
+                labs.set(i, updated);
+                return;
+            }
+        }
+        throw new NoSuchElementException("Lab not found: " + labId);
+    }
+
+    @Override
+    public List<PatientId> findAllPatientIds() {
+        return store.keySet().stream()
+                .sorted()
+                .map(PatientId::new)
+                .toList();
     }
 
     // ─── Métodos de inspección para tests ───────────────────────────────

@@ -2,33 +2,36 @@ package com.hospital.alertas.domain.model;
 
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * Builder de test para {@link LabResult} con datos clínicos realistas por defecto.
+ * Test builder for {@link LabResult} with realistic clinical default data.
  *
- * <p>Permite construir instancias válidas sobrescribiendo selectivamente
- * solo los campos relevantes para cada escenario de prueba, evitando
- * la repetición de datos boilerplate.
+ * <p>Allows building valid instances by selectively overriding
+ * only the fields relevant for each test scenario, avoiding
+ * boilerplate data repetition.
  *
- * <p>Valores por defecto: paciente PAC001, Biometría Hemática con
- * Hemoglobina 14.5 g/dL y Leucocitos 7500 /uL (rangos normales).
+ * <p>Default values: patient PAC001, Complete Blood Count with
+ * Hemoglobin 14.5 g/dL and Leukocytes 7500 /uL (normal ranges).
  */
 public final class LabResultTestBuilder {
 
     private String labId = UUID.randomUUID().toString();
     private PatientId patientId = new PatientId("PAC001");
-    private String tipoExamen = "Biometria Hematica";
-    private Map<String, String> valoresAnaliticos = new HashMap<>(Map.of(
-            "Hemoglobina", "14.5 g/dL",
-            "Leucocitos", "7500 /uL"
+    private String testType = "Complete Blood Count";
+    private Map<String, String> analyticValues = new HashMap<>(Map.of(
+            "Hemoglobin", "14.5 g/dL",
+            "Leukocytes", "7500 /uL"
     ));
     private Instant timestamp = Instant.parse("2026-06-01T10:30:00Z");
-    private boolean alertaCritica = false;
-    private String s3PathCompleto = "s3://hc-laboratorios/2026/06/01/PAC001/BH-001.pdf";
-    private String resumenClinico = null;
+    private boolean criticalAlert = false;
+    private String s3Path = "s3://hc-laboratories/2026/06/01/PAC001/BH-001.pdf";
+    private String clinicalSummary = null;
     private long version = 0L;
+    private VisibilityStatus visibilityStatus = VisibilityStatus.PENDING;
+    private List<SentNotification> notifications = List.of();
 
     public LabResultTestBuilder withLabId(String labId) {
         this.labId = labId;
@@ -45,30 +48,38 @@ public final class LabResultTestBuilder {
         return this;
     }
 
+    /**
+     * @deprecated Use {@link #withTestType(String)} instead.
+     */
+    @Deprecated
     public LabResultTestBuilder withTipoExamen(String tipoExamen) {
-        this.tipoExamen = tipoExamen;
+        return withTestType(tipoExamen);
+    }
+
+    public LabResultTestBuilder withTestType(String testType) {
+        this.testType = testType;
         return this;
     }
 
-    public LabResultTestBuilder withValoresAnaliticos(Map<String, String> valores) {
-        this.valoresAnaliticos = new HashMap<>(valores);
-        return this;
-    }
-
-    /**
-     * Agrega o sobrescribe un valor analítico específico, manteniendo los demás.
-     */
-    public LabResultTestBuilder withAnalito(String nombre, String valor) {
-        this.valoresAnaliticos.put(nombre, valor);
+    public LabResultTestBuilder withAnalyticValues(Map<String, String> values) {
+        this.analyticValues = new HashMap<>(values);
         return this;
     }
 
     /**
-     * Reemplaza TODOS los valores analíticos con un solo analito.
-     * Útil para tests que evalúan un umbral específico en aislamiento.
+     * Adds or overrides a specific analytical value, keeping others.
      */
-    public LabResultTestBuilder withSoloAnalito(String nombre, String valor) {
-        this.valoresAnaliticos = new HashMap<>(Map.of(nombre, valor));
+    public LabResultTestBuilder withAnalyte(String name, String value) {
+        this.analyticValues.put(name, value);
+        return this;
+    }
+
+    /**
+     * Replaces ALL analytical values with a single analyte.
+     * Useful for tests evaluating a specific threshold in isolation.
+     */
+    public LabResultTestBuilder withSingleAnalyte(String name, String value) {
+        this.analyticValues = new HashMap<>(Map.of(name, value));
         return this;
     }
 
@@ -77,18 +88,18 @@ public final class LabResultTestBuilder {
         return this;
     }
 
-    public LabResultTestBuilder withAlertaCritica(boolean alertaCritica) {
-        this.alertaCritica = alertaCritica;
+    public LabResultTestBuilder withCriticalAlert(boolean criticalAlert) {
+        this.criticalAlert = criticalAlert;
         return this;
     }
 
-    public LabResultTestBuilder withS3Path(String s3PathCompleto) {
-        this.s3PathCompleto = s3PathCompleto;
+    public LabResultTestBuilder withS3Path(String s3Path) {
+        this.s3Path = s3Path;
         return this;
     }
 
-    public LabResultTestBuilder withResumenClinico(String resumenClinico) {
-        this.resumenClinico = resumenClinico;
+    public LabResultTestBuilder withClinicalSummary(String clinicalSummary) {
+        this.clinicalSummary = clinicalSummary;
         return this;
     }
 
@@ -97,49 +108,120 @@ public final class LabResultTestBuilder {
         return this;
     }
 
+    public LabResultTestBuilder withVisibilityStatus(VisibilityStatus visibilityStatus) {
+        this.visibilityStatus = visibilityStatus;
+        return this;
+    }
+
+    public LabResultTestBuilder withNotifications(List<SentNotification> notifications) {
+        this.notifications = notifications;
+        return this;
+    }
+
+    // ─── Aliases for backward compatibility with tests ────────────────────
+
+    /**
+     * @deprecated Use {@link #withSingleAnalyte(String, String)} instead.
+     */
+    @Deprecated
+    public LabResultTestBuilder withSoloAnalito(String nombre, String valor) {
+        return withSingleAnalyte(nombre, valor);
+    }
+
+    /**
+     * @deprecated Use {@link #withAnalyticValues(Map)} instead.
+     */
+    @Deprecated
+    public LabResultTestBuilder withValoresAnaliticos(Map<String, String> valores) {
+        return withAnalyticValues(valores);
+    }
+
+    /**
+     * @deprecated Use {@link #withCriticalAlert(boolean)} instead.
+     */
+    @Deprecated
+    public LabResultTestBuilder withAlertaCritica(boolean alertaCritica) {
+        return withCriticalAlert(alertaCritica);
+    }
+
     public LabResult build() {
         return new LabResult(
-                labId, patientId, tipoExamen,
-                Map.copyOf(valoresAnaliticos),
-                timestamp, alertaCritica, s3PathCompleto,
-                resumenClinico, version
+                labId, patientId, testType,
+                Map.copyOf(analyticValues),
+                timestamp, criticalAlert, s3Path,
+                clinicalSummary, version,
+                visibilityStatus, notifications
         );
     }
 
     /**
-     * Shortcut: crea un LabResult con valores clínicos normales (sin alerta).
+     * Shortcut: creates a LabResult with normal clinical values (no alert).
      */
-    public static LabResult unLabNormal() {
+    public static LabResult aNormalLab() {
         return new LabResultTestBuilder().build();
     }
 
     /**
-     * Shortcut: crea un LabResult con Hemoglobina crítica (< 7 g/dL).
+     * Shortcut: creates a LabResult with critical Hemoglobin (< 7 g/dL).
      */
+    public static LabResult aLabWithCriticalHemoglobin() {
+        return new LabResultTestBuilder()
+                .withSingleAnalyte("Hemoglobina", "5.2 g/dL")
+                .withTestType("Hemograma Completo")
+                .build();
+    }
+
+    /**
+     * Shortcut: creates a LabResult with critical Potassium (> 6.0 mEq/L).
+     */
+    public static LabResult aLabWithCriticalPotassium() {
+        return new LabResultTestBuilder()
+                .withSingleAnalyte("Potasio", "7.8 mEq/L")
+                .withTestType("Electrolitos Sericos")
+                .build();
+    }
+
+    /**
+     * Shortcut: creates a LabResult with critical Glucose (> 400 mg/dL).
+     */
+    public static LabResult aLabWithCriticalGlucose() {
+        return new LabResultTestBuilder()
+                .withSingleAnalyte("Glucosa", "520 mg/dL")
+                .withTestType("Quimica Sanguinea")
+                .build();
+    }
+
+    // ─── Spanish aliases for backward compatibility with tests ──────────────
+
+    /**
+     * @deprecated Use {@link #aNormalLab()} instead.
+     */
+    @Deprecated
+    public static LabResult unLabNormal() {
+        return aNormalLab();
+    }
+
+    /**
+     * @deprecated Use {@link #aLabWithCriticalHemoglobin()} instead.
+     */
+    @Deprecated
     public static LabResult unLabConHemoglobinaCritica() {
-        return new LabResultTestBuilder()
-                .withSoloAnalito("Hemoglobina", "5.2 g/dL")
-                .withTipoExamen("Biometria Hematica")
-                .build();
+        return aLabWithCriticalHemoglobin();
     }
 
     /**
-     * Shortcut: crea un LabResult con Potasio crítico (> 6.0 mEq/L).
+     * @deprecated Use {@link #aLabWithCriticalPotassium()} instead.
      */
+    @Deprecated
     public static LabResult unLabConPotasioCritico() {
-        return new LabResultTestBuilder()
-                .withSoloAnalito("Potasio", "7.8 mEq/L")
-                .withTipoExamen("Electrolitos Sericos")
-                .build();
+        return aLabWithCriticalPotassium();
     }
 
     /**
-     * Shortcut: crea un LabResult con Glucosa crítica (> 400 mg/dL).
+     * @deprecated Use {@link #aLabWithCriticalGlucose()} instead.
      */
+    @Deprecated
     public static LabResult unLabConGlucosaCritica() {
-        return new LabResultTestBuilder()
-                .withSoloAnalito("Glucosa", "520 mg/dL")
-                .withTipoExamen("Quimica Sanguinea")
-                .build();
+        return aLabWithCriticalGlucose();
     }
 }
