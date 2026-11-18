@@ -1,45 +1,36 @@
 # HCG Coding Standards
 
 ## Java
-- **Records only** for domain models (immutable, no setters)
-- **OCC versioning** on all mutable entities (`Integer version`)
-- **Package structure**: `com.hcg.alertas.{domain,application,infrastructure}`
-- **Null safety**: Validate in record constructors (`throw IllegalArgumentException`)
-- **No getters/setters** — records expose fields directly
+- **Records only** for domain models (immutable, no setters).
+- **OCC versioning** on all mutable entities (`long version`).
+- **Package structure**: `com.hospital.alertas.{domain,application,infrastructure}`.
+- **Null & invariant safety**: Validate in record constructors (e.g., regex checks in `PatientId`).
+- **No reactive frameworks**: Strictly imperative, sequential Java code. No Mutiny (`Uni`/`Multi`), Reactor, or WebFlux.
 
 ## Quarkus / Lambda
-- `@RegisterForReflection(serialization=true)` on all domain records
-- `@ApplicationScoped` for use cases and adapters
-- Virtual threads for blocking I/O (DynamoDB, SQS batch)
-- Native image profile: `-Pnative -Dquarkus.native.container-build=true`
-- SnapStart enabled for Java 17+ (`AWS_LAMBDA_SNAPSHOT=true`)
+- `@RegisterForReflection(serialization = true)` on all domain records and DTOs.
+- `@ApplicationScoped` for services and adapters.
+- Virtual threads (Project Loom) for concurrent I/O.
+- Native image profile: `-Pnative -Dquarkus.native.container-build=true`.
+- Unified stream handler: `QuarkusStreamHandler` handles API Gateway HTTP & SQS events.
 
 ## DynamoDB
-- Single-table design only
-- Use `DynamoDbAsyncClient` with Netty + virtual threads
-- Query API over GetItem/Scan (use PK/SK/GSI)
-- Conditional writes for OCC (`version = :expected`)
+- Single-table design only (`app.dynamodb.table-name`, default `hc-alertas`).
+- **Synchronous client**: Use blocking `DynamoDbClient` with virtual threads, NOT `DynamoDbAsyncClient`.
+- Query API over Scan (query `PK = PATIENT#{id}` or `SK begins_with LAB#`).
+- Conditional writes for OCC (`attribute_not_exists(PK)` for version 0; `#v = :expected` for updates).
 
 ## Testing
-- `@QuarkusTest` + `@Testcontainers` (LocalStack for DynamoDB/SQS)
-- Testcontainers for integration tests
-- Unit tests for pure domain logic (no framework)
-- Coverage target: ≥80% on domain + application layers
+- `@QuarkusTest` + `@QuarkusTestResource(LocalStackTestResource.class)` for integration tests.
+- Pure unit tests for domain invariants with no framework dependencies.
+- In-memory test fakes (`InMemoryLabPersistence`) for testing application use cases.
+- Realism in test fixtures: realistic clinical ranges and analytes.
 
-## Build
-```xml
-<profile>
-  <id>native</id>
-  <properties>
-    <quarkus.package.type>native</quarkus.package.type>
-    <quarkus.native.container-build>true</quarkus.native.container-build>
-    <quarkus.native.builder-image>ghcr.io/graalvm/native-image:25</quarkus.native.builder-image>
-  </properties>
-</profile>
-```
-
-## Deployment
+## Build & Deploy
 ```bash
+# Build native binary
 mvn clean package -Pnative -Dquarkus.native.container-build=true
-aws lambda update-function-code --function-name alertas-civil-ingest --zip-file fileb://target/function.zip
+
+# Local tests with LocalStack
+mvn test
 ```

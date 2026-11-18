@@ -1,48 +1,50 @@
 # HCG Database Schema (DynamoDB Single Table)
 
 ## Table
-- **Name**: `ALERTA_CIVIL_MASTER`
+- **Config Property**: `app.dynamodb.table-name` (Default: `hc-alertas`)
 - **Partition Key**: `PK` (String)
 - **Sort Key**: `SK` (String)
 
 ## Key Structure
 
-### LabResult
+### Patient Profile Metadata
 ```
-PK: PROJECT#alertas-civil
-SK: LABRESULT#{patientId}#{resultedAt:ISO8601}
-GSI1PK: STATUS#{estadoVisibilidad}
-GSI1SK: TIMESTAMP#{resultedAt}
-GSI2PK: PATIENT#{patientId}
-GSI2SK: ANALYTE#{analyteCode}
+PK: PATIENT#{patientId}
+SK: METADATA
 ```
+- **Attributes**: `Name`, `DateOfBirth`, `ClinicalHistory`
 
-### NotificacionEnviada
+### LabResult Item
 ```
-PK: PROJECT#alertas-civil
-SK: NOTIFICACION#{notificationId}
-GSI1PK: RESULT#{resultId}
-GSI1SK: TIMESTAMP#{sentAt}
+PK: PATIENT#{patientId}
+SK: LAB#{labId}
 ```
+- **Attributes**:
+  - `TestType` (String)
+  - `AnalyticValues` (Map<String, String>)
+  - `Timestamp` (String ISO-8601)
+  - `IsCriticalAlert` (Boolean)
+  - `S3PathComplete` (String)
+  - `ClinicalSummary` (String, nullable)
+  - `Version` (Number, OCC counter)
+  - `VisibilityStatus` (String: `PENDING` | `NOTIFIED` | `READ_CONFIRMED`)
+  - `SentNotifications` (List of Maps: `NotificationId`, `Recipient`, `Channel`, `Status`, `TimestampSend`, `TimestampRead`)
 
-## Global Secondary Indexes
-| Index | PK | SK | Use Case |
-|-------|-----|-----|----------|
-| GSI1 | `STATUS#{estadoVisibilidad}` | `TIMESTAMP#{resultedAt}` | Query critical alerts by status + time |
-| GSI2 | `PATIENT#{patientId}` | `ANALYTE#{analyteCode}` | Patient's lab history by analyte |
+---
+
+## Secondary Indexes (Planned / Optional GSI)
+
+| Index | PK | SK | Purpose |
+|-------|-----|-----|---------|
+| GSI1 | `STATUS#{visibilityStatus}` | `TIMESTAMP#{timestamp}` | Query pending or critical alerts across patients |
+
+---
 
 ## Access Patterns
-| Query | Method |
-|-------|--------|
-| Get LabResult by ID | `GetItem` PK=PROJECT#alertas-civil, SK=LABRESULT#{patientId}#{timestamp} |
-| Get patient's latest results | `Query` PK=PATIENT#{patientId}, SK begins_with LABRESULT# |
-| Get all versions of result | `Query` PK=LABRESULT#{studyId}, SK begins_with VERSION# |
-| List critical alerts | `Query` GSI1 PK=STATUS#CRITICAL_ALERT |
-| Get notifications for result | `Query` GSI1 PK=RESULT#{resultId} |
 
-## OCC Versioning
-- On UPDATE: `SET version = version + 1` with condition `version = :expected`
-- Fail if version mismatch → retry with fresh read
-
-## TTL
-- NotificacionEnviada: TTL = sentAt + 90 days (auto-cleanup)
+| Query / Operation | Access Specification | Details |
+|-------------------|----------------------|---------|
+| Get Patient Timeline & Metadata | `Query` PK=`PATIENT#{patientId}` | 1 network round-trip retrieves `METADATA` and all `LAB#` records |
+| Get Latest Lab for Patient | `Query` PK=`PATIENT#{patientId}`, SK begins_with `LAB#` | Evaluated in-memory by latest timestamp or sorted SK |
+| Write / Update LabResult (OCC) | `PutItem` / `UpdateItem` with `ConditionExpression` on `Version` | Version 0 uses `attribute_not_exists(PK) AND attribute_not_exists(SK)`; updates assert `#v = :expected` |
+| Register Notification / Update Status | Atomic `UpdateItem` on `LAB#{labId}` | Appends to `SentNotifications` list, updates `VisibilityStatus`, increments `Version` |
